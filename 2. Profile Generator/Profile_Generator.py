@@ -200,7 +200,7 @@ def develop_allMSR_8760BiasCorrEffectiveWindSpeeds(pd_allMSR_Hourly100mEffective
                                     .set_axis(ranks,axis=1))
 
     # Allocate dataframe for the corrected sorted profiles.
-    pd_allMSR_TimeSortedExtraplolatedProfiles = pd.DataFrame().reindex_like(pd_allMSR_TimeSortedProfiles)  # copy format of the dataframe
+    pd_allMSR_TimeSortedExtrapolatedProfiles = pd.DataFrame().reindex_like(pd_allMSR_TimeSortedProfiles)  # copy format of the dataframe
 
     # Activate when diagnosis needed
     # pd_LinearFitParam_ab=pd.DataFrame()
@@ -210,28 +210,30 @@ def develop_allMSR_8760BiasCorrEffectiveWindSpeeds(pd_allMSR_Hourly100mEffective
     # For each rank r, determine a and b by fitting y_r = a*x + b across MSRs.
     #   x: ERA5 annual mean wind speed of each MSR.
     #   y_r: ERA5 wind speed at rank r of each MSR.
-    for r in range(1, len(pd_allMSR_TimeSeriesProfiles.iloc[0,:TimeSteps]) + 1):
-        
-        print(f"rank {r}: curve fitted, value extrapolated")
 
-        # Fit linear model across MSRs for rank r.
-        # Column calling here is by numerical order i.e. (0,TimeSteps) so needed to subtract 1.
-        popt, _ = curve_fit(f, 
-                            pd_allMSR_ERA5mean, 
-                            pd_allMSR_TimeSortedProfiles.iloc[:,r - 1])
-        
-        # Activate when diagnosis needed.
-        # pd_LinearFitParam_ab = pd_LinearFitParam_ab.append(pd.DataFrame({'rank': [r], 'a': [popt[0]], 'b': [popt[1]]}))
-        # plt.plot(pd_allMSR_ERA5mean, f(pd_allMSR_ERA5mean, popt[0], popt[1]), label='data')
+    x = pd_allMSR_ERA5mean.to_numpy(dtype=float)                # (nMSR,)
+    y = pd_allMSR_TimeSortedProfiles.to_numpy(dtype=float)      # (nMSR, TimeSteps)
 
-        # Apply the fitted relationship at the GWA mean for each MSR to obtain the extrapolated value for that rank.
-        # Column calling here is by numerical order i.e. (0,TimeSteps) so needed to subtract 1.
-        pd_allMSR_TimeSortedExtraplolatedProfiles.iloc[:, r - 1] = f(pd_allMSR_GWAmean, popt[0], popt[1])
+    x_mean = x.mean()
+    x_center = x - x_mean
+    den = np.sum(x_center ** 2)
+
+    y_mean = y.mean(axis=0)                                     # (TimeSteps,)
+    y_center = y - y_mean
+
+    a = (x_center[:, None] * y_center).sum(axis=0) / den
+    b = y_mean - a * x_mean
+
+    # Extrapolate to each MSRs GWA mean
+    gwa = pd_allMSR_GWAmean.to_numpy(dtype=float)              # (nMSR,)
+    y_gwa = gwa[:, None] * a[None, :] + b[None, :]
+
+    pd_allMSR_TimeSortedExtrapolatedProfiles.iloc[:, :] = y_gwa
 
 
     # Activate when diagnosis needed.
     # plt.figure(1)
-    # plt.plot(pd_allMSR_TimeSortedExtraplolatedProfiles.iloc[0, :])
+    # plt.plot(pd_allMSR_TimeSortedExtrapolatedProfiles.iloc[0, :])
     # plt.figure(2)
     # plt.plot(pd_allMSR_TimeSortedProfiles.iloc[0, :])
 
@@ -249,7 +251,7 @@ def develop_allMSR_8760BiasCorrEffectiveWindSpeeds(pd_allMSR_Hourly100mEffective
     # For each MSR (z), map the ranked original time series value to the corresponding extrapolated value from the sorted corrected profiles.
     for z in range(0, len(pd_allMSR_TimeSeriesProfiles)):  # MSR wise loop
         pd_allMSR_TimeSeriesProfilesCorrected.iloc[z, :] = pd_allMSR_TimeSeriesProfileRanks.iloc[z, :].map(
-            pd_allMSR_TimeSortedExtraplolatedProfiles.iloc[z, :])
+            pd_allMSR_TimeSortedExtrapolatedProfiles.iloc[z, :])
 
     return pd_allMSR_TimeSeriesProfilesCorrected
 
