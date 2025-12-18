@@ -49,8 +49,8 @@ def ComputeHourlyCF_SolarPV (GSA_GHI_MSR_Mean, temp_2m, GHI):
     ERA5_GHI_OriginalAnnualYield=np.sum(GHI)
 
     # Bias correction
-    GHIAnnualBias_KWh=GSA_GHI_MSR_Mean*(8760/24)-ERA5_GHI_OriginalAnnualYield
-    GHI_ifallCorrected = GHI + GHIAnnualBias_KWh / 8760
+    GHIAnnualBias_KWh=GSA_GHI_MSR_Mean*(TimeSteps/24)-ERA5_GHI_OriginalAnnualYield
+    GHI_ifallCorrected = GHI + GHIAnnualBias_KWh / TimeSteps
     BiasCorrection_GHI_Adder_KWh=GHIAnnualBias_KWh/len(GHI[(GHI!=0)&(GHI_ifallCorrected<1)&(GHI_ifallCorrected>0)])
     GHI[(GHI!=0)&(GHI_ifallCorrected<1)&(GHI_ifallCorrected>0)]=GHI[(GHI!=0)&(GHI_ifallCorrected<1)&(GHI_ifallCorrected>0)]+BiasCorrection_GHI_Adder_KWh
     GHI[GHI<0]=0
@@ -190,7 +190,7 @@ def develop_allMSR_8760BiasCorrEffectiveWindSpeeds(pd_allMSR_Hourly100mEffective
     pd_allMSR_ERA5mean = pd_allMSR_TimeSeriesProfiles.mean(axis=1)
 
     # Create ranks (1,2...TimeSteps). Rank 1 goes to the smallest wind speed.
-    ranks = [i + 1 for i in range(8760)]
+    ranks = [i + 1 for i in range(TimeSteps)]
 
     # Sort time series in ascending order to obtain order statistics. 
     # The result is a matrix [nMSR x TimeSteps] where each row is an MSR and each column is a rank.
@@ -210,7 +210,7 @@ def develop_allMSR_8760BiasCorrEffectiveWindSpeeds(pd_allMSR_Hourly100mEffective
     # For each rank r, determine a and b by fitting y_r = a*x + b across MSRs.
     #   x: ERA5 annual mean wind speed of each MSR.
     #   y_r: ERA5 wind speed at rank r of each MSR.
-    for r in range(1, len(pd_allMSR_TimeSeriesProfiles.iloc[0,:8760]) + 1):
+    for r in range(1, len(pd_allMSR_TimeSeriesProfiles.iloc[0,:TimeSteps]) + 1):
         
         print("rank %s: curve fitted, value extrapolated"%r)
 
@@ -265,9 +265,9 @@ def CreateLocalTimeProfile(pd_UTC, pd_CountryUTC_offsets, country_withspaces):
         # pd_LocalTime: pd.DataFrame
  
     # Create Local Time Profile
-    UTCHourTags = ['H%s' % i for i in range(1, 8761)]
+    UTCHourTags = ['H%s' % i for i in range(1, TimeSteps)]
     offset = pd_CountryUTC_offsets[pd_CountryUTC_offsets.Country == country_withspaces].Hours.iloc[0]
-    LocalTimeHourTags = ['H%s' % (i % 8760 + 1) for i in range(offset, 8760 + offset)]
+    LocalTimeHourTags = ['H%s' % (i % TimeSteps + 1) for i in range(offset, TimeSteps + offset)]
     ColRenameDictionary = dict(zip(UTCHourTags, LocalTimeHourTags))
     print("%s UTC Offset:%s" % (country_withspaces, offset))
     # print(ColRenameDictionary)
@@ -278,10 +278,10 @@ def CreateLocalTimeProfile(pd_UTC, pd_CountryUTC_offsets, country_withspaces):
 
     cols = pd_LocalTime.columns.to_list()
     if offset > 0:
-        NewColOrder = cols[:-8760] + cols[-offset:] + cols[-8760:-offset]
+        NewColOrder = cols[:-TimeSteps] + cols[-offset:] + cols[-TimeSteps:-offset]
         pd_LocalTime = pd_LocalTime[NewColOrder]
     if offset < 0:
-        NewColOrder = cols[:-8760] + cols[-8760 - offset:] + cols[-8760:-8760 - offset]
+        NewColOrder = cols[:-TimeSteps] + cols[-TimeSteps - offset:] + cols[-TimeSteps:-TimeSteps - offset]
         pd_LocalTime = pd_LocalTime[NewColOrder]
 
     return pd_LocalTime
@@ -304,6 +304,7 @@ ResourceRasterCarryingSubFolderName=ControlPathsAndNames.loc["ResourceRasterCarr
 MSR_DataCarryingSubFolderName=ControlPathsAndNames.loc["MSR_DataCarryingSubFolderName"][0]
 SolarPVNameConvention=ControlPathsAndNames.loc["SolarPVNameConvention"][0]
 WindNameConvention=ControlPathsAndNames.loc["WindNameConvention"][0]
+TimeSteps=ControlPathsAndNames.loc["TimeSteps"][0]
 
 # Load configurations
 RE_TechnologyList=[] # naming as per three technology names for which MSR creator code creates MSRs
@@ -374,12 +375,12 @@ for CountryCounter in range(0,len(AllCountries)):#country wise loop
 
 
             # Declare variables to run subprograms that get capacity factor profiles from resource values for each MSR
-            np_allMSR_HourlyCF=np.zeros((len(gpd_MSR_Attributes),8760))
+            np_allMSR_HourlyCF=np.zeros((len(gpd_MSR_Attributes),TimeSteps))
 
-            np_allMSR_HourlyWindSpeeds_corrected_ResultantVector = np.zeros((len(gpd_MSR_Attributes), 8760)) #m/s
-            np_allMSR_HourlyWindSpeeds_uncorrected_ResultantVector = np.zeros((len(gpd_MSR_Attributes), 8760))  # m/s
-            np_allMSR_HourlyGHI = np.zeros((len(gpd_MSR_Attributes), 8760)) #Wh
-            np_allMSR_HourlyGHI_corrected_Wh=np.zeros((len(gpd_MSR_Attributes), 8760))
+            np_allMSR_HourlyWindSpeeds_corrected_ResultantVector = np.zeros((len(gpd_MSR_Attributes), TimeSteps)) #m/s
+            np_allMSR_HourlyWindSpeeds_uncorrected_ResultantVector = np.zeros((len(gpd_MSR_Attributes), TimeSteps))  # m/s
+            np_allMSR_HourlyGHI = np.zeros((len(gpd_MSR_Attributes), TimeSteps)) #Wh
+            np_allMSR_HourlyGHI_corrected_Wh=np.zeros((len(gpd_MSR_Attributes), TimeSteps))
 
             # Initialize datasets for wind bias correction
             np_allMSR_ERA5_AnnualMean=np.zeros(len(gpd_MSR_Attributes))
@@ -419,7 +420,7 @@ for CountryCounter in range(0,len(AllCountries)):#country wise loop
                     np_HourlyGHI = np_ERA5Data.variables["ssrd"][:, index_lat, index_lon]
                     GSA_GHI_MSR_Mean=dc_ResourceStatsAcrossMSR[MSR_Counter]['mean']
                     if not GSA_GHI_MSR_Mean:
-                        GSA_GHI_MSR_Mean=np.sum(np_HourlyGHI)*(24/8760)
+                        GSA_GHI_MSR_Mean=np.sum(np_HourlyGHI)*(24/TimeSteps)
 
                     np_HourlyCF, GHI_corrected_wh, BiasCorrection_GHI_Adder_Wh, ERA5_GHI_OriginalAnnualYield=ComputeHourlyCF_SolarPV(GSA_GHI_MSR_Mean,np_Hourly2meterTemperature,np_HourlyGHI)
 
@@ -431,7 +432,7 @@ for CountryCounter in range(0,len(AllCountries)):#country wise loop
                     np_allMSR_HourlyGHI[MSR_Counter] = np_HourlyGHI
                     np_allMSR_HourlyGHI_corrected_Wh[MSR_Counter]=np_HourlyGHI_corrected_Wh
                     np_allMSR_GHI_ERA5OriginalAnnualYield[MSR_Counter] = ERA5_GHI_OriginalAnnualYield
-                    np_allMSR_GHI_GSA_MSR_Mean[MSR_Counter]= GSA_GHI_MSR_Mean*(8760/24) #converting per day yield of Solar GIS to annual
+                    np_allMSR_GHI_GSA_MSR_Mean[MSR_Counter]= GSA_GHI_MSR_Mean*(TimeSteps/24) #converting per day yield of Solar GIS to annual
                     np_allMSR_BiasCorrection_GHI_Adder_Wh[MSR_Counter]=BiasCorrection_GHI_Adder_Wh
 
                 if RE==WindNameConvention:
@@ -462,7 +463,7 @@ for CountryCounter in range(0,len(AllCountries)):#country wise loop
             # Prepare the data set and export to xlsx
             pd_output = gpd_MSR_Attributes
             pd_output.rename(columns={"FID": "MSR_ID"}, inplace=True)
-            HourTags = ['H%s' % i for i in range(1, 8761)]
+            HourTags = ['H%s' % i for i in range(1, TimeSteps+1)]
             if RE==SolarPVNameConvention:
                 print("creating solarpv files")
                 pd_SolarBiasInformation = pd.DataFrame(
