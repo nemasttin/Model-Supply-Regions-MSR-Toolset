@@ -212,7 +212,7 @@ def develop_allMSR_8760BiasCorrEffectiveWindSpeeds(pd_allMSR_Hourly100mEffective
     #   y_r: ERA5 wind speed at rank r of each MSR.
     for r in range(1, len(pd_allMSR_TimeSeriesProfiles.iloc[0,:TimeSteps]) + 1):
         
-        print("rank %s: curve fitted, value extrapolated"%r)
+        print(f"rank {r}: curve fitted, value extrapolated")
 
         # Fit linear model across MSRs for rank r.
         # Column calling here is by numerical order i.e. (0,TimeSteps) so needed to subtract 1.
@@ -265,11 +265,11 @@ def CreateLocalTimeProfile(pd_UTC, pd_CountryUTC_offsets, country_withspaces):
         # pd_LocalTime: pd.DataFrame
  
     # Create Local Time Profile
-    UTCHourTags = ['H%s' % i for i in range(1, TimeSteps + 1)]
+    UTCHourTags = [f'H{i}' for i in range(1, TimeSteps + 1)]
     offset = pd_CountryUTC_offsets[pd_CountryUTC_offsets.Country == country_withspaces].Hours.iloc[0]
-    LocalTimeHourTags = ['H%s' % (i % TimeSteps + 1) for i in range(offset, TimeSteps + offset)]
+    LocalTimeHourTags = [f'H{(i % TimeSteps) + 1}' for i in range(offset, TimeSteps + offset)]
     ColRenameDictionary = dict(zip(UTCHourTags, LocalTimeHourTags))
-    print("%s UTC Offset:%s" % (country_withspaces, offset))
+    print(f"{country_withspaces} UTC Offset:{offset}")
     # print(ColRenameDictionary)
 
     pd_LocalTime = pd_UTC.rename(columns=ColRenameDictionary)
@@ -324,7 +324,7 @@ flag_Diagnosis= ControlConfigurations.loc["Produce hourly resource profiles for 
 flag_RunBiasCorrCode = 1  # Not a user option
 pd_LogFile=pd.DataFrame()
 DateTimeStamp = time.localtime()
-DateTimeStamp = "%s%s%s%s%s%s" % (DateTimeStamp.tm_year, DateTimeStamp.tm_mon, DateTimeStamp.tm_mday, DateTimeStamp.tm_hour, DateTimeStamp.tm_min,DateTimeStamp.tm_sec)
+DateTimeStamp = f"{DateTimeStamp.tm_year}{DateTimeStamp.tm_mon}{DateTimeStamp.tm_mday}{DateTimeStamp.tm_hour}{DateTimeStamp.tm_min}{DateTimeStamp.tm_sec}"
 
 if not os.path.isdir(OutputFolder_UTCProfiles):
     os.makedirs(OutputFolder_UTCProfiles)
@@ -396,7 +396,7 @@ for CountryCounter in range(0,len(AllCountries)):#country wise loop
                 # Make all MSR timeseries profiles
                 pd_allMSR_Hourly100mEffectiveWindSpeeds=pd.DataFrame()
                 for MSR_Counter in range(0, len(gpd_MSR_Attributes)): #MSR wise loop
-                    print("appending effective ERA5 speed dataset MSR %s"%MSR_Counter)
+                    print(f"appending effective ERA5 speed dataset MSR {MSR_Counter}")
                     lat = ERA5Locations_near_MSR_CentroidLocations[MSR_Counter, 0]
                     lon = ERA5Locations_near_MSR_CentroidLocations[MSR_Counter, 1]
                     index_lat = np.where(np_lat == lat)[0][0]
@@ -458,12 +458,12 @@ for CountryCounter in range(0,len(AllCountries)):#country wise loop
                     np_allMSR_HourlyWindSpeeds_uncorrected_ResultantVector[MSR_Counter] = np_HourlyWindSpeeds_UnCorrected_ResultantVector
                     np_allMSR_ERA5_AnnualMean[MSR_Counter] = ERA5_AnnualMean
                     np_allMSR_Wind_GWA_MSR_Mean[MSR_Counter]= Wind_GWA_MSR_Mean
-                print ("%s MSR %s"%(MSR_Counter,RE))
+                print(f"{MSR_Counter} MSR {RE}")
 
             # Prepare the data set and export to xlsx
             pd_output = gpd_MSR_Attributes
             pd_output.rename(columns={"FID": "MSR_ID"}, inplace=True)
-            HourTags = ['H%s' % i for i in range(1, TimeSteps+1)]
+            HourTags = [f'H{i}' for i in range(1, TimeSteps+1)]
             if RE==SolarPVNameConvention:
                 print("creating solarpv files")
                 pd_SolarBiasInformation = pd.DataFrame(
@@ -472,14 +472,13 @@ for CountryCounter in range(0,len(AllCountries)):#country wise loop
                 if flag_Diagnosis:
                     pd_output_diagnosis = pd.concat(
                         [pd_output, pd_SolarBiasInformation, pd.DataFrame(np_allMSR_HourlyGHI_corrected_Wh, columns=HourTags)], axis=1)
-                    pd_output_diagnosis.to_csv(
-                        OutputCountryFolder_UTC+r"\%s %s BiasCorrected ResourceProfiles.csv" % (country,RE),index=False)
-                    print(r"\%s %s BiasCorrected ResourceProfiles.csv created" % (country,RE))
+                    pd_output_diagnosis.to_csv(f"{OutputCountryFolder_UTC}\\{country} {RE} BiasCorrected ResourceProfiles.csv", index=False)
+                    print(f"\\{country} {RE} BiasCorrected ResourceProfiles.csv created")
 
                 pd_output = pd.concat([pd_output, pd_SolarBiasInformation, pd.DataFrame(np_allMSR_HourlyCF, columns=HourTags)], axis=1)
-                FileAddressCountryProfile_UTC=OutputCountryFolder_UTC + r"\%s %s CFs.csv" % (country, RE)
+                FileAddressCountryProfile_UTC = f"{OutputCountryFolder_UTC}\\{country} {RE} CFs.csv"
                 pd_output.to_csv(FileAddressCountryProfile_UTC, index=False)
-                print(r"UTC-->%s %s CFs.csv created" %(country, RE))
+                print(f"UTC-->{country} {RE} CFs.csv created")
 
             if RE==WindNameConvention:
                 print("creating wind files")
@@ -488,32 +487,29 @@ for CountryCounter in range(0,len(AllCountries)):#country wise loop
                 if flag_Diagnosis:
                     pd_output_diagnosis = pd.concat(
                         [pd_output, pd_WindBiasInformation, pd.DataFrame(np_allMSR_HourlyWindSpeeds_corrected_ResultantVector, columns=HourTags)], axis=1)
-                    pd_output_diagnosis.to_csv(
-                        OutputCountryFolder_UTC+r"\%s %s %sm BiasCorrected ResourceProfiles.csv" % (country, RE, WindTurbineHeight_meters), index=False)
-                    print(r"\%s %s corrected resource profiles.csv created" % (country,RE))
+                    pd_output_diagnosis.to_csv(f"{OutputCountryFolder_UTC}\\{country} {RE} {WindTurbineHeight_meters}m BiasCorrected ResourceProfiles.csv", index=False)
+                    print(f"\\{country} {RE} corrected resource profiles.csv created")
 
                     pd_output_diagnosis = pd.concat(
                         [pd_output, pd_WindBiasInformation, pd.DataFrame(np_allMSR_HourlyWindSpeeds_uncorrected_ResultantVector, columns=HourTags)], axis=1)
-                    pd_output_diagnosis.to_csv(
-                        OutputCountryFolder_UTC + r"\%s %s %sm UnCorrected ResourceProfiles.csv" % (
-                        country, RE, WindTurbineHeight_meters), index=False)
-                    print(r"\%s %s uncorrected resource profiles.csv created" % (country, RE))
+                    pd_output_diagnosis.to_csv(f"{OutputCountryFolder_UTC}\\{country} {RE} {WindTurbineHeight_meters}m UnCorrected ResourceProfiles.csv", index=False)
+                    print(f"\\{country} {RE} uncorrected resource profiles.csv created")
 
                 pd_output = pd.concat([pd_output, pd_WindBiasInformation, pd.DataFrame(np_allMSR_HourlyCF, columns=HourTags)], axis=1)
-                FileAddressCountryProfile_UTC=OutputCountryFolder_UTC+r"\%s %s %sm CFs.csv"%(country, RE, WindTurbineHeight_meters)
+                FileAddressCountryProfile_UTC = f"{OutputCountryFolder_UTC}\\{country} {RE} {WindTurbineHeight_meters}m CFs.csv"
                 pd_output.to_csv(FileAddressCountryProfile_UTC, index=False)
-                print(r"UTC-->%s %s CFs.csv created" %(country, RE))
+                print(f"UTC-->{country} {RE} CFs.csv created")
 
             pd_UTC = pd.read_csv(FileAddressCountryProfile_UTC)
 
             pd_LocalTime = CreateLocalTimeProfile(pd_UTC, pd_CountryUTC_offsets, country_withspaces)
 
             pd_LocalTime.to_csv(OutputCountryFolder_LocalTime + "\\" + FileAddressCountryProfile_UTC.rsplit("\\", 1)[1])
-            print(r"LocalTime-->%s" % FileAddressCountryProfile_UTC.rsplit("\\", 1)[1])
+            print(f"LocalTime-->{FileAddressCountryProfile_UTC.rsplit('\\', 1)[1]}")
 
         except Exception as e:
             print (e)
             traceback.print_exc()
-            pd_LogFile = pd_LogFile.append(pd.DataFrame(["%s: Skipped %s profiles" % (country, RE)], columns=['Log']))
-            print("%s: Skipped %s profiles" % (country, RE))
+            pd_LogFile = pd_LogFile.append(pd.DataFrame([f"{country}: Skipped {RE} profiles"], columns=['Log']))
+            print(f"{country}: Skipped {RE} profiles")
             pd_LogFile.to_csv(OutputFolder_UTCProfiles + '\\' + DateTimeStamp + 'ProfileGenerator_LogFile.csv')
