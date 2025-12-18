@@ -510,6 +510,6 @@ for CountryCounter in range(0,len(AllCountries)):#country wise loop
         except Exception as e:
             print (e)
             traceback.print_exc()
-            pd_LogFile = pd_LogFile.append(pd.DataFrame([f"{country}: Skipped {RE} profiles"], columns=['Log']))
+            pd_LogFile = pd.concat([pd_LogFile, pd.DataFrame({"Log": [f"{country}: Skipped {RE} profiles"]})],ignore_index=True)
             print(f"{country}: Skipped {RE} profiles")
             pd_LogFile.to_csv(OutputFolder_UTCProfiles + '\\' + DateTimeStamp + 'ProfileGenerator_LogFile.csv')
