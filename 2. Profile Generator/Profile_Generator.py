@@ -294,7 +294,8 @@ ControlConfigurations=pd.read_excel('ControlFile_ProfileGenerator.xlsx', sheet_n
 pd_CountryUTC_offsets=pd.read_excel('ControlFile_ProfileGenerator.xlsx', sheet_name="CountryUTC_Offset_InUse")
 
 # Load paths
-np_ERA5Data=Dataset(ControlPathsAndNames.loc["ERA5DataFilePath"][0])
+np_ERA5Data_Inst=Dataset(ControlPathsAndNames.loc["ERA5DataFilePath_Inst"][0])
+np_ERA5Data_Acc=Dataset(ControlPathsAndNames.loc["ERA5DataFilePath_Acc"][0])
 pd_WindSpeed_to_Power = pd.read_csv(ControlPathsAndNames.loc["ThreeIEC_TurbinePowerCurves"][0])
 AllCountries=pd.read_csv(ControlPathsAndNames.loc["FileAddress_CountryNamesList"][0],names=["Ct"])
 Input_MSR_Folder=ControlPathsAndNames.loc["Input_MSR_Folder"][0]
@@ -363,15 +364,15 @@ for CountryCounter in range(0,len(AllCountries)):#country wise loop
 
 
             # Find nearest neighbors of MSR coordinates in ERA5 data set
-            ERA5Locations=list(itertools.product(np_ERA5Data.variables["latitude"][:],np_ERA5Data.variables["longitude"][:]))
+            ERA5Locations=list(itertools.product(np_ERA5Data_Inst.variables["latitude"][:],np_ERA5Data_Inst.variables["longitude"][:]))
             MSR_CentroidLocations=list(zip(gpd_MSR_Attributes.Latitude,gpd_MSR_Attributes.Longitude))
             ERA5Grid = spatial.cKDTree(ERA5Locations)
             dist, indexes = ERA5Grid.query(MSR_CentroidLocations)
             ERA5Locations_near_MSR_CentroidLocations= np.array(ERA5Locations)[indexes]
             gpd_MSR_Attributes["ERA5Latitude"]=ERA5Locations_near_MSR_CentroidLocations[:,0]
             gpd_MSR_Attributes["ERA5Longitude"]=ERA5Locations_near_MSR_CentroidLocations[:,1]
-            np_lon = np_ERA5Data.variables["longitude"][:]
-            np_lat = np_ERA5Data.variables["latitude"][:]
+            np_lon = np_ERA5Data_Inst.variables["longitude"][:]
+            np_lat = np_ERA5Data_Inst.variables["latitude"][:]
 
 
             # Declare variables to run subprograms that get capacity factor profiles from resource values for each MSR
@@ -401,8 +402,8 @@ for CountryCounter in range(0,len(AllCountries)):#country wise loop
                     lon = ERA5Locations_near_MSR_CentroidLocations[MSR_Counter, 1]
                     index_lat = np.where(np_lat == lat)[0][0]
                     index_lon = np.where(np_lon == lon)[0][0]
-                    u=np_ERA5Data.variables["u100"][:,index_lat, index_lon]
-                    v=np_ERA5Data.variables["v100"][:,index_lat, index_lon]
+                    u=np_ERA5Data_Inst.variables["u100"][:,index_lat, index_lon]
+                    v=np_ERA5Data_Inst.variables["v100"][:,index_lat, index_lon]
                     pd_allMSR_Hourly100mEffectiveWindSpeeds=pd_allMSR_Hourly100mEffectiveWindSpeeds.append (pd.DataFrame((u**2+v**2)**(1/2)).transpose(), ignore_index=True)
                 pd_Wind_GWA_MSR_Mean = pd.DataFrame(dc_ResourceStatsAcrossMSR)['mean'].fillna(pd.DataFrame(dc_ResourceStatsAcrossMSR)['mean'].mean())#double checked, as long the MSR ids are numbered 0,1,2..., this command puts right mean to right table cell
                 # Get corrected 100m wind speeds, rows=MSRs, columns=hours
@@ -414,10 +415,10 @@ for CountryCounter in range(0,len(AllCountries)):#country wise loop
                 lon=ERA5Locations_near_MSR_CentroidLocations[MSR_Counter,1]
                 index_lat = np.where(np_lat == lat)[0][0]
                 index_lon = np.where(np_lon == lon)[0][0]
-                np_Hourly2meterTemperature = np_ERA5Data.variables["t2m"][:, index_lat, index_lon]
+                np_Hourly2meterTemperature = np_ERA5Data_Inst.variables["t2m"][:, index_lat, index_lon]
 
                 if RE==SolarPVNameConvention:
-                    np_HourlyGHI = np_ERA5Data.variables["ssrd"][:, index_lat, index_lon]
+                    np_HourlyGHI = np_ERA5Data_Acc.variables["ssrd"][:, index_lat, index_lon]
                     GSA_GHI_MSR_Mean=dc_ResourceStatsAcrossMSR[MSR_Counter]['mean']
                     if not GSA_GHI_MSR_Mean:
                         GSA_GHI_MSR_Mean=np.sum(np_HourlyGHI)*(24/TimeSteps)
@@ -436,15 +437,15 @@ for CountryCounter in range(0,len(AllCountries)):#country wise loop
                     np_allMSR_BiasCorrection_GHI_Adder_Wh[MSR_Counter]=BiasCorrection_GHI_Adder_Wh
 
                 if RE==WindNameConvention:
-                    np_HourlyU100mEastward=np_ERA5Data.variables["u100"][:,index_lat, index_lon]
-                    np_HourlyV100mNorthward = np_ERA5Data.variables["v100"][:, index_lat, index_lon]
-                    np_HourlyU10mEastward = np_ERA5Data.variables["u10"][:, index_lat, index_lon]
-                    np_HourlyV10mNorthward = np_ERA5Data.variables["v10"][:, index_lat, index_lon]
+                    np_HourlyU100mEastward=np_ERA5Data_Inst.variables["u100"][:,index_lat, index_lon]
+                    np_HourlyV100mNorthward = np_ERA5Data_Inst.variables["v100"][:, index_lat, index_lon]
+                    np_HourlyU10mEastward = np_ERA5Data_Inst.variables["u10"][:, index_lat, index_lon]
+                    np_HourlyV10mNorthward = np_ERA5Data_Inst.variables["v10"][:, index_lat, index_lon]
                     Wind_GWA_MSR_Mean=dc_ResourceStatsAcrossMSR[MSR_Counter]['mean']
                     BiasCorrEffectiveWindSpeeds= pd_allMSR_Hourly100m8760BiasCorrEffectiveWindSpeeds.iloc[MSR_Counter, :]
                     if not Wind_GWA_MSR_Mean:
                         Wind_GWA_MSR_Mean=pd.DataFrame(dc_ResourceStatsAcrossMSR)['mean'].mean()
-                    elevation=np_ERA5Data.variables["z"][0, index_lat, index_lon]/9.80665 #see orography variable description in https://cds.climate.copernicus.eu/cdsapp#!/dataset/reanalysis-era5-single-levels-monthly-means?tab=overview
+                    elevation=np_ERA5Data_Inst.variables["z"][0, index_lat, index_lon]/9.80665 #see orography variable description in https://cds.climate.copernicus.eu/cdsapp#!/dataset/reanalysis-era5-single-levels-monthly-means?tab=overview
 
                     np_HourlyCF, np_HourlyWindSpeeds_ResultantVector, np_HourlyWindSpeeds_UnCorrected_ResultantVector, ERA5_AnnualMean=ComputeHourlyCF_Wind(BiasCorrEffectiveWindSpeeds, np_HourlyU100mEastward, np_HourlyU10mEastward, np_HourlyV100mNorthward, np_HourlyV10mNorthward, WindTurbineHeight_meters, np_Hourly2meterTemperature, elevation, pd_WindSpeed_to_Power)
 
