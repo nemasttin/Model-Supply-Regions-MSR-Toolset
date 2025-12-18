@@ -265,7 +265,7 @@ def CreateLocalTimeProfile(pd_UTC, pd_CountryUTC_offsets, country_withspaces):
         # pd_LocalTime: pd.DataFrame
  
     # Create Local Time Profile
-    UTCHourTags = ['H%s' % i for i in range(1, TimeSteps)]
+    UTCHourTags = ['H%s' % i for i in range(1, TimeSteps + 1)]
     offset = pd_CountryUTC_offsets[pd_CountryUTC_offsets.Country == country_withspaces].Hours.iloc[0]
     LocalTimeHourTags = ['H%s' % (i % TimeSteps + 1) for i in range(offset, TimeSteps + offset)]
     ColRenameDictionary = dict(zip(UTCHourTags, LocalTimeHourTags))
