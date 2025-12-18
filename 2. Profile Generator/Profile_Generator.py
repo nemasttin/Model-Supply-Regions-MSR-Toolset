@@ -479,7 +479,7 @@ for CountryCounter in range(0,len(AllCountries)):#country wise loop
                          pd.DataFrame(np_allMSR_HourlyGHI_corrected_Wh,
                                       columns=HourTags)],
                                       axis=1)
-                    output_path = os.path.join(OutputCountryFolder_UTC, f"{country} {RE} BiasCorrected ResourceProfiles.csv", index=False)
+                    output_path = os.path.join(OutputCountryFolder_UTC, f"{country} {RE} BiasCorrected ResourceProfiles.csv")
                     pd_output_diagnosis.to_csv(output_path, index=False)
                     print(f"{country} {RE} BiasCorrected ResourceProfiles.csv created")
 
@@ -487,7 +487,7 @@ for CountryCounter in range(0,len(AllCountries)):#country wise loop
                     [pd_output,
                      pd_SolarBiasInformation,
                      pd.DataFrame(np_allMSR_HourlyCF, columns=HourTags)], axis=1)
-                FileAddressCountryProfile_UTC = os.path.join(OutputCountryFolder_UTC, f"{country} {RE} CFs.csv"
+                FileAddressCountryProfile_UTC = os.path.join(OutputCountryFolder_UTC, f"{country} {RE} CFs.csv")
                 pd_output.to_csv(FileAddressCountryProfile_UTC, index=False)
                 print(f"UTC-->{country} {RE} CFs.csv created")
 
