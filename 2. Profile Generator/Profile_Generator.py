@@ -173,9 +173,6 @@ def develop_allMSR_8760BiasCorrEffectiveWindSpeeds(pd_allMSR_Hourly100mEffective
         # pd_allMSR_TimeSeriesProfilesCorrected: pd.DataFrame
         #   Bias-corrected hourly series [m/s].
 
-    def f(x, a, b):
-        return a * x + b
-    
     # Single MSR case: simple linear scaling
     if len(pd_allMSR_Hourly100mEffectiveWindSpeeds)==1:
         return pd_allMSR_Hourly100mEffectiveWindSpeeds*float(pd_Wind_GWA_MSR_Mean/pd_allMSR_Hourly100mEffectiveWindSpeeds.mean(axis=1))
@@ -206,7 +203,7 @@ def develop_allMSR_8760BiasCorrEffectiveWindSpeeds(pd_allMSR_Hourly100mEffective
     # pd_LinearFitParam_ab=pd.DataFrame()
     # plt.figure(1)
 
-    # Rank wise loop.
+    # Vectorised linear fitting
     # For each rank r, determine a and b by fitting y_r = a*x + b across MSRs.
     #   x: ERA5 annual mean wind speed of each MSR.
     #   y_r: ERA5 wind speed at rank r of each MSR.
@@ -307,7 +304,21 @@ ResourceRasterCarryingSubFolderName=ControlPathsAndNames.loc["ResourceRasterCarr
 MSR_DataCarryingSubFolderName=ControlPathsAndNames.loc["MSR_DataCarryingSubFolderName"][0]
 SolarPVNameConvention=ControlPathsAndNames.loc["SolarPVNameConvention"][0]
 WindNameConvention=ControlPathsAndNames.loc["WindNameConvention"][0]
-TimeSteps=ControlPathsAndNames.loc["TimeSteps"][0]
+TimeSteps=int(ControlPathsAndNames.loc["TimeSteps"][0])
+
+print("Inputs loaded from control file")
+print(f"ERA5 instantaneous variables {list(np_ERA5Data_Inst.variables.keys())}")
+print(f"ERA5 accumulative variables: {list(np_ERA5Data_Acc.variables.keys())}")
+print(f"Creating time series profiles for country: {AllCountries['Ct'].tolist()}")
+
+inst_steps = len(np_ERA5Data_Inst.dimensions["valid_time"])
+acc_steps = len(np_ERA5Data_Acc.dimensions["valid_time"])
+
+if int(TimeSteps) != inst_steps or int(TimeSteps) != acc_steps:
+    raise ValueError(
+        f"TimeSteps mismatch: ControlFile TimeSteps={int(TimeSteps)},"
+        f"ERA5 Inst timesteps={inst_steps}, ERA5 Acc timesteps{acc_steps}")
+print(f"Creating time series profiles for {TimeSteps} timesteps")
 
 # Load configurations
 RE_TechnologyList=[] # naming as per three technology names for which MSR creator code creates MSRs
@@ -334,7 +345,7 @@ if not os.path.isdir(OutputFolder_UTCProfiles):
 if not os.path.isdir(OutputFolder_LocalTime):
     os.makedirs(OutputFolder_LocalTime)
 
-for CountryCounter in range(0,len(AllCountries)):#country wise loop
+for CountryCounter in range(0,len(AllCountries)):   # country wise loop
     country_withspaces=AllCountries.Ct[CountryCounter]
     country = AllCountries.Ct[CountryCounter].replace(" ", "")
     MSR_CountryFolder=os.path.join(Input_MSR_Folder, country)
@@ -498,6 +509,7 @@ for CountryCounter in range(0,len(AllCountries)):#country wise loop
                 pd_WindBiasInformation = pd.DataFrame(
                     {"GWA Annual MSR Mean m/s": np_allMSR_Wind_GWA_MSR_Mean,
                      "ERA-Raw Annual Mean Speed m/s":np_allMSR_ERA5_AnnualMean})
+                
                 if flag_Diagnosis:
                     pd_output_diagnosis = pd.concat(
                         [pd_output,
