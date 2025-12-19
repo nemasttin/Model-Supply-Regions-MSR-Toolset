@@ -389,9 +389,9 @@ for CountryCounter in range(0,len(AllCountries)):   # country wise loop
             # Declare variables to run subprograms that get capacity factor profiles from resource values for each MSR
             np_allMSR_HourlyCF=np.zeros((len(gpd_MSR_Attributes),TimeSteps))
 
-            np_allMSR_HourlyWindSpeeds_corrected_ResultantVector = np.zeros((len(gpd_MSR_Attributes), TimeSteps)) #m/s
-            np_allMSR_HourlyWindSpeeds_uncorrected_ResultantVector = np.zeros((len(gpd_MSR_Attributes), TimeSteps))  # m/s
-            np_allMSR_HourlyGHI = np.zeros((len(gpd_MSR_Attributes), TimeSteps)) #Wh
+            np_allMSR_HourlyWindSpeeds_corrected_ResultantVector = np.zeros((len(gpd_MSR_Attributes), TimeSteps)) # [m/s]
+            np_allMSR_HourlyWindSpeeds_uncorrected_ResultantVector = np.zeros((len(gpd_MSR_Attributes), TimeSteps))  # [m/s]
+            np_allMSR_HourlyGHI = np.zeros((len(gpd_MSR_Attributes), TimeSteps)) # [Wh]
             np_allMSR_HourlyGHI_corrected_Wh=np.zeros((len(gpd_MSR_Attributes), TimeSteps))
 
             # Initialize datasets for wind bias correction
@@ -407,17 +407,29 @@ for CountryCounter in range(0,len(AllCountries)):   # country wise loop
                 # Get effective windspeeds, 8760 Bias Corrected
                 # Make all MSR timeseries profiles
                 pd_allMSR_Hourly100mEffectiveWindSpeeds=pd.DataFrame()
-                for MSR_Counter in range(0, len(gpd_MSR_Attributes)): #MSR wise loop
+                rows = []
+                for MSR_Counter in range(0, len(gpd_MSR_Attributes)): # MSR wise loop
                     print(f"appending effective ERA5 speed dataset MSR {MSR_Counter}")
+
                     lat = ERA5Locations_near_MSR_CentroidLocations[MSR_Counter, 0]
                     lon = ERA5Locations_near_MSR_CentroidLocations[MSR_Counter, 1]
                     index_lat = np.where(np_lat == lat)[0][0]
                     index_lon = np.where(np_lon == lon)[0][0]
+
                     u=np_ERA5Data_Inst.variables["u100"][:,index_lat, index_lon]
                     v=np_ERA5Data_Inst.variables["v100"][:,index_lat, index_lon]
-                    pd_allMSR_Hourly100mEffectiveWindSpeeds=pd_allMSR_Hourly100mEffectiveWindSpeeds.append (pd.DataFrame((u**2+v**2)**(1/2)).transpose(), ignore_index=True)
-                pd_Wind_GWA_MSR_Mean = pd.DataFrame(dc_ResourceStatsAcrossMSR)['mean'].fillna(pd.DataFrame(dc_ResourceStatsAcrossMSR)['mean'].mean())#double checked, as long the MSR ids are numbered 0,1,2..., this command puts right mean to right table cell
+
+                    speed = np.sqrt(u*u + v*v)
+                    speed = np.atleast_1d(speed)
+
+                    rows.append(speed[None, :])
+                    
+                pd_allMSR_Hourly100mEffectiveWindSpeeds=pd.DataFrame(np.vstack(rows))
+                
+                stats_df = pd.DataFrame(dc_ResourceStatsAcrossMSR)
+                pd_Wind_GWA_MSR_Mean = stats_df["mean"].fillna(stats_df["mean"].mean()) # double checked, as long the MSR ids are numbered 0,1,2..., this command puts right mean to right table cell
                 # Get corrected 100m wind speeds, rows=MSRs, columns=hours
+                print("Creating bias-corrected wind speed profiles for all MSRs")
                 pd_allMSR_Hourly100m8760BiasCorrEffectiveWindSpeeds=develop_allMSR_8760BiasCorrEffectiveWindSpeeds(pd_allMSR_Hourly100mEffectiveWindSpeeds, pd_Wind_GWA_MSR_Mean)
 
 
