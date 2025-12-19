@@ -69,12 +69,9 @@ def ComputeHourlyCF_SolarPV (GSA_GHI_MSR_Mean, temp_2m, GHI):
     G_norm = GHI_Wh/Gstc
     T_norm = cT*GHI_Wh + temp_2m-Tmod_stc
 
-    log_G_norm = np.zeros(len(GHI_Wh))
-    for n in range(len(GHI_Wh)):
-        if GHI_Wh[n] == 0:
-            log_G_norm[n] = 0
-        else:
-            log_G_norm[n] = np.log(G_norm[n])
+    log_G_norm = np.zeros_like(G_norm, dtype=float)
+    mask = GHI_Wh != 0
+    log_G_norm[mask] = np.log(G_norm[mask])
 
     n_rel = 1 + k[0]*log_G_norm + k[1]*(log_G_norm)**2 + T_norm*(k[2] + k[3]*log_G_norm + k[4]*(log_G_norm)**2) + k[5]*T_norm**2
 
