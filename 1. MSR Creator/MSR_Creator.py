@@ -4,6 +4,8 @@
 
 import math
 import os
+# del os.environ['PROJ_LIB']
+import pyproj
 import json
 import scipy.stats
 import struct, time
@@ -16,16 +18,20 @@ import string
 import numpy as np
 from scipy.ndimage.measurements import label
 from pathlib import Path
+import rioxarray
 import rasterio
 from rasterio.features import shapes
+from rasterio.warp import reproject, Resampling
 import xarray
 import xrspatial
-import richdem as rd
+# import richdem as rd
+import subprocess
 from geocube.api.core import make_geocube
 from shapely.geometry import box, mapping
 from rasterstats import zonal_stats
 from colorama import Fore
 from math import ceil
+from osgeo import osr
 
 
 # import warnings
@@ -114,12 +120,11 @@ def PolygonizeResourcePotential(Path_ResourcePotentialRaster,SubFolder_Polygoniz
                 if len(gpd_SingleBand_ToBeCapped) > 0:
                     for i in range(0, len(gpd_SingleBand_ToBeCapped)):
                         print("dividing polygon %s/%s" % (i + 1, len(gpd_SingleBand_ToBeCapped)))
-                        gpd_SinglePolygonParts = gpd.GeoDataFrame(crs=gpd_SingleBand_ToBeCapped.crs,
-                                                                  geometry=list(
-                                                                      quadrat_cut_geometry(
-                                                                          gpd_SingleBand_ToBeCapped.geometry.loc[
-                                                                              i],
-                                                                          np.sqrt(MaxAreaToCapMSRs_kM2) * 1000)))
+                        parts = quadrat_cut_geometry(gpd_SingleBand_ToBeCapped.geometry.loc[i],
+                                                                np.sqrt(MaxAreaToCapMSRs_kM2) * 1000)
+                        gpd_SinglePolygonParts = gpd.GeoDataFrame(
+                                                                crs=gpd_SingleBand_ToBeCapped.crs,
+                                                                geometry=list(parts.geoms))
                         if i == 0 and gpd_SingleBand_Final.empty:
                             gpd_SingleBand_Final = gpd_SinglePolygonParts
                         else:
@@ -367,7 +372,7 @@ if RE_Technology == 'wind':
 rotor_diammeter, turbine_nameplate_capacity = int(ControlAnalysisInputs.WindTurbineRotorDiameter_meters), int(ControlAnalysisInputs.WindTurbineCapacity_Watts)
 
 gdf_CountryBoundaries=gpd.read_file(InputSpatialDatasetsFolder+FileName_CountryBoundaries+".shp")
-SubfolderCountryMapsForClipping=HomeDirectory+r"\RegionBoundaryMaps"
+SubfolderCountryMapsForClipping=HomeDirectory+ControlPaths.loc["FolderAddress_OutputFolder"][0]+r"/RegionBoundaryMaps"
 
 pd_LogFile=pd.DataFrame()
 for CountryCounter in range(0,len(AllCountries)):#country wise loop
@@ -463,10 +468,9 @@ for CountryCounter in range(0,len(AllCountries)):#country wise loop
                 print("%s vector dataset is rasterized and projected ESRI:54009" % Vector)
             del (gdf_ClippedVector, Rasterized_ClippedVector)  # to save memory
 
-            ElevationRaster=rd.LoadGDAL("%s%s_%s_projected.tif" % (SubfolderStage1_Clipping,RE_Technology, FileName_Elevation)) #loads rd array. This class is just like numpy with extra info. Till date, no utility to convert it to numpy and then xarray.
-            SlopeRaster=rd.TerrainAttribute(ElevationRaster, attrib='slope_percentage')
-            rd.SaveGDAL("%s%s_slope_projected.tif" % (SubfolderStage1_Clipping,RE_Technology), SlopeRaster)
-            del (ElevationRaster, SlopeRaster)
+            dem_path = "%s%s_%s_projected.tif" % (SubfolderStage1_Clipping, RE_Technology, FileName_Elevation)
+            slope_path = "%s%s_slope_projected.tif" % (SubfolderStage1_Clipping, RE_Technology)
+            subprocess.check_call(["gdaldem", "slope", dem_path, slope_path, "-p"])
 
             for DatasetName in [FileName_PowerGrid, FileName_TransmissionGrid, FileName_DistributionGrid, FileName_Roads]:
                 Raster = xarray.open_dataarray("%s%s_%s_RasterizedProjected.tif" % (SubfolderStage1_Clipping,RE_Technology, DatasetName))
