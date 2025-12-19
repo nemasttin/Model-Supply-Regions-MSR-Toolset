@@ -188,10 +188,9 @@ def develop_allMSR_8760BiasCorrEffectiveWindSpeeds(pd_allMSR_Hourly100mEffective
 
     # Sort time series in ascending order to obtain order statistics. 
     # The result is a matrix [nMSR x TimeSteps] where each row is an MSR and each column is a rank.
-    pd_allMSR_TimeSortedProfiles = (pd_allMSR_TimeSeriesProfiles.transpose()
-                                    .apply(np.sort,axis=0)
-                                    .transpose()
-                                    .set_axis(ranks,axis=1))
+    vals = pd_allMSR_TimeSeriesProfiles.to_numpy(dtype=float)     # (nMSR, TimeSteps)
+    sorted_vals = np.sort(vals, axis=1)                           # sort each MSR row
+    pd_allMSR_TimeSortedProfiles = pd.DataFrame(sorted_vals, index=pd_allMSR_TimeSeriesProfiles.index, columns=ranks)
 
     # Allocate dataframe for the corrected sorted profiles.
     pd_allMSR_TimeSortedExtrapolatedProfiles = pd.DataFrame().reindex_like(pd_allMSR_TimeSortedProfiles)  # copy format of the dataframe
