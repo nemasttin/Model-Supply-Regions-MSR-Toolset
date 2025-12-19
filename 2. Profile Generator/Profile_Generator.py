@@ -294,8 +294,8 @@ np_ERA5Data_Acc=Dataset(ControlPathsAndNames.loc["ERA5DataFilePath_Acc"][0])
 pd_WindSpeed_to_Power = pd.read_csv(ControlPathsAndNames.loc["ThreeIEC_TurbinePowerCurves"][0])
 AllCountries=pd.read_csv(ControlPathsAndNames.loc["FileAddress_CountryNamesList"][0],names=["Ct"])
 Input_MSR_Folder=ControlPathsAndNames.loc["Input_MSR_Folder"][0]
-OutputFolder_UTCProfiles=ControlPathsAndNames.loc["OutputFolder"][0]+"\\Results_UTC_Profiles"
-OutputFolder_LocalTime=ControlPathsAndNames.loc["OutputFolder"][0]+"\\Results_LocalTimeProfiles"
+OutputFolder_UTCProfiles=os.path.join(ControlPathsAndNames.loc["OutputFolder"][0], "Results_UTC_Profiles")
+OutputFolder_LocalTime=os.path.join(ControlPathsAndNames.loc["OutputFolder"][0], "Results_LocalTimeProfiles")
 ResourceRasterCarryingSubFolderName=ControlPathsAndNames.loc["ResourceRasterCarryingSubFolderName"][0]
 MSR_DataCarryingSubFolderName=ControlPathsAndNames.loc["MSR_DataCarryingSubFolderName"][0]
 SolarPVNameConvention=ControlPathsAndNames.loc["SolarPVNameConvention"][0]
