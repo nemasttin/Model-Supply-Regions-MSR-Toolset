@@ -233,18 +233,35 @@ def develop_allMSR_8760BiasCorrEffectiveWindSpeeds(pd_allMSR_Hourly100mEffective
     # Phase 2: Mapping corrected ranks back to time series
     
     # Compute the rank of each hourly value in the original/unsorted time series profile for each MSR.
-    pd_allMSR_TimeSeriesProfileRanks = pd_allMSR_TimeSeriesProfiles.rank(ascending=True, 
-                                                                         method='first',
-                                                                         axis=1)
+    orig = pd_allMSR_TimeSeriesProfiles.to_numpy(dtype=float)                       # (nMSR, T)
+    corr_sorted = pd_allMSR_TimeSortedExtrapolatedProfiles.to_numpy(dtype=float)    # (nMSR, T)
+    
+    # For each MSR (row), compute the indices that would sort the original time series.
+    # order[z, k] = original index of the k-th smallest element in MSR z.
+    order = np.argsort(orig, axis=1, kind="mergesort")                              # (nMSR, T)
 
-    # Allocate dataframe for the corrected time series profiles.
-    pd_allMSR_TimeSeriesProfilesCorrected = pd.DataFrame().reindex_like(pd_allMSR_TimeSeriesProfiles)  # copy dataset format
+    inv_order = np.empty_like(order)
+    inv_order[np.arange(order.shape[0])[:, None], order] = np.arange(order.shape[1])[None, :]
 
-    # Reverse mapping.
-    # For each MSR (z), map the ranked original time series value to the corresponding extrapolated value from the sorted corrected profiles.
-    for z in range(0, len(pd_allMSR_TimeSeriesProfiles)):  # MSR wise loop
-        pd_allMSR_TimeSeriesProfilesCorrected.iloc[z, :] = pd_allMSR_TimeSeriesProfileRanks.iloc[z, :].map(
-            pd_allMSR_TimeSortedExtrapolatedProfiles.iloc[z, :])
+    corr = np.take_along_axis(corr_sorted, inv_order, axis=1)
+
+    pd_allMSR_TimeSeriesProfilesCorrected = pd.DataFrame(
+        corr,
+        index=pd_allMSR_TimeSeriesProfiles.index,
+        columns=pd_allMSR_TimeSeriesProfiles.columns
+    )
+    # pd_allMSR_TimeSeriesProfileRanks = pd_allMSR_TimeSeriesProfiles.rank(ascending=True, 
+    #                                                                      method='first',
+    #                                                                      axis=1)
+
+    # # Allocate dataframe for the corrected time series profiles.
+    # pd_allMSR_TimeSeriesProfilesCorrected = pd.DataFrame().reindex_like(pd_allMSR_TimeSeriesProfiles)  # copy dataset format
+
+    # # Reverse mapping.
+    # # For each MSR (z), map the ranked original time series value to the corresponding extrapolated value from the sorted corrected profiles.
+    # for z in range(0, len(pd_allMSR_TimeSeriesProfiles)):  # MSR wise loop
+    #     pd_allMSR_TimeSeriesProfilesCorrected.iloc[z, :] = pd_allMSR_TimeSeriesProfileRanks.iloc[z, :].map(
+    #         pd_allMSR_TimeSortedExtrapolatedProfiles.iloc[z, :])
 
     return pd_allMSR_TimeSeriesProfilesCorrected
 
@@ -328,7 +345,7 @@ if ControlConfigurations.loc["Run code for Wind"][0]==1:
     ResourceRasterNameList.append(ControlPathsAndNames.loc["Wind_ResourceRasterName"][0])
     WindTurbineHeight_meters = ControlConfigurations.loc["For wind, give wind turbine height (meters)"][0]
 
-flag_Diagnosis= ControlConfigurations.loc["Produce hourly resource profiles for diagnostics"][0]
+flag_Diagnosis=ControlConfigurations.loc["Produce hourly resource profiles for diagnostics"][0]
 
 # Code run time flags
 flag_RunBiasCorrCode = 1  # Not a user option
