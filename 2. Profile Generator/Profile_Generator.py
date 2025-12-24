@@ -15,6 +15,26 @@ import geopandas as gpd
 import time
 import traceback
 
+def ReadERA5Data(ERA5Data_Inst_folder, ERA5Data_Acc_folder, ERA5Data_startyear, ERA5Data_endyear):
+
+    years = list(range(ERA5Data_startyear, ERA5Data_endyear + 1))
+    np_ERA5Data_Inst_dict = {}
+    np_ERA5Data_Acc_dict = {}
+
+    for year in years:
+        ERA5Data_Inst_path = os.path.join(ERA5Data_Inst_folder, f'inst_{year}_06.nc')
+        ERA5Data_Acc_path = os.path.join(ERA5Data_Acc_folder, f'acc_{year}_06.nc')
+
+        if not os.path.isfile(ERA5Data_Inst_path):
+            raise FileNotFoundError(f"Missing: {ERA5Data_Inst_path}")
+        if not os.path.isfile(ERA5Data_Acc_path):
+            raise FileNotFoundError(f"Missing: {ERA5Data_Acc_path}")
+        
+        np_ERA5Data_Inst_dict[year] = Dataset(ERA5Data_Inst_path)
+        np_ERA5Data_Acc_dict[year] = Dataset(ERA5Data_Acc_path)
+    
+    return np_ERA5Data_Inst_dict, np_ERA5Data_Acc_dict
+
 # ComputeHourlyCF_SolarPV
 def ComputeHourlyCF_SolarPV (GSA_GHI_MSR_Mean, temp_2m, GHI): 
     
@@ -156,114 +176,175 @@ def ComputeHourlyCF_Wind(BiasCorrEffectiveWindSpeeds, u100, u10, v100, v10, Wind
 
     return CF_wind, map_windspeed_hubh, map_windspeed_hubh_Uncorrected, ERA5_AnnualMean100m
 
-# develop_allMSR_8760BiasCorrEffectiveWindSpeeds
-def develop_allMSR_8760BiasCorrEffectiveWindSpeeds(pd_allMSR_Hourly100mEffectiveWindSpeeds, pd_Wind_GWA_MSR_Mean):
+# develop_allMSR_8760BiasCorrEffectiveWindSpeeds_fityear
+def develop_allMSR_8760BiasCorrEffectiveWindSpeeds_fityear(pd_allMSR_Hourly100mEffectiveWindSpeeds_fityear, pd_Wind_GWA_MSR_Mean, TimeSteps):
     
-    # Bias-correct wind speed profiles for all MSRs.
+    # Bias-correct hourly ERA5 effective wind speed profiles for all MSRs.
 
     # Inputs
-        # pd_allMSR_Hourly100mEffectiveWindSpeeds: pandas.DataFrame
+        # pd_allMSR_Hourly100mEffectiveWindSpeeds: pd.DataFrame (nMSR, TimeSteps)
         #   Rows correspond to MSRs, columns correspond to hours (1 to TimeSteps). ERA5 effective wind speeds at 100 m before bias correction [m/s].
-        # pd_Wind_GWA_MSR_Mean: pandas.Series
+        # pd_Wind_GWA_MSR_Mean: pd.Series
         #   Global Wind Atlas (GWA) long-term mean wind speed at 1 km resolution averaged across the MSR [m/s].
+        # TimeSteps: int
+        #   Number of time steps in the time series.
     # Outputs
-        # pd_allMSR_TimeSeriesProfilesCorrected: pd.DataFrame
-        #   Bias-corrected hourly series [m/s].
+        # a: np.ndarray (TimeSteps,)
+        #   Slope a of the linear fit for each rank.
+        # b: np.ndarray (TimeSteps,)
+        #   Intercept b of the linear fit for each rank.
+        # S0_fit: pd.DataFrame (nMSR, TimeSteps)
+        #   Sorted ERA5 wind speed per MSR before bias correction [m/s].
+        # Shat0_fit: pd.DataFrame (nMSR, TimeSteps)
+        #   Sorted ERA5 wind speed per MSR after bias correction [m/s].
+        # pd_allMSR_TimeSeriesProfilesCorrected: pd.DataFrame (nMSR, TimeSteps)
+        #   Bias-corrected ERA5 wind speed time series per MSR [m/s].
 
-    # Single MSR case: simple linear scaling
-    if len(pd_allMSR_Hourly100mEffectiveWindSpeeds)==1:
-        return pd_allMSR_Hourly100mEffectiveWindSpeeds*float(pd_Wind_GWA_MSR_Mean/pd_allMSR_Hourly100mEffectiveWindSpeeds.mean(axis=1))
-    
-    # custom steps if needed
-    pd_allMSR_TimeSeriesProfiles = pd_allMSR_Hourly100mEffectiveWindSpeeds
-    pd_allMSR_GWAmean = pd_Wind_GWA_MSR_Mean
-
-    # Phase 1: Rank wise fitting and extrapolation
-
-    # Compute the dependent variable x i.e. annual ERA5 means
-    pd_allMSR_ERA5mean = pd_allMSR_TimeSeriesProfiles.mean(axis=1)
+    V0 = pd_allMSR_Hourly100mEffectiveWindSpeeds_fityear.to_numpy(dtype=float)                        # (nMSR, TimeSteps)
+    gwa_mean = pd_Wind_GWA_MSR_Mean.loc[pd_allMSR_Hourly100mEffectiveWindSpeeds_fityear.index]
 
     # Create ranks (1,2...TimeSteps). Rank 1 goes to the smallest wind speed.
-    ranks = [i + 1 for i in range(TimeSteps)]
+    ranks = [i + 1 for i in range(TimeSteps)]                                                         # (TimeSteps,)
 
-    # Sort time series in ascending order to obtain order statistics. 
-    # The result is a matrix [nMSR x TimeSteps] where each row is an MSR and each column is a rank.
-    vals = pd_allMSR_TimeSeriesProfiles.to_numpy(dtype=float)     # (nMSR, TimeSteps)
-    sorted_vals = np.sort(vals, axis=1)                           # sort each MSR row
-    pd_allMSR_TimeSortedProfiles = pd.DataFrame(sorted_vals, index=pd_allMSR_TimeSeriesProfiles.index, columns=ranks)
+    # Single MSR case: simple linear scaling
+    if V0.shape[0] == 1:
+    
+        S0 = np.sort(V0, axis=1)                                                                      # (1, TimeSteps)
+        scale = float(gwa_mean/V0.mean(axis=1))
+        Shat0 = S0 * scale
 
-    # Allocate dataframe for the corrected sorted profiles.
-    pd_allMSR_TimeSortedExtrapolatedProfiles = pd.DataFrame().reindex_like(pd_allMSR_TimeSortedProfiles)  # copy format of the dataframe
+        order = np.argsort(V0, axis=1, kind="mergesort")
+        inv_order = np.empty_like(order)
+        inv_order[0, order[0, :]] = np.arange(TimeSteps)
+        corr = np.take_along_axis(Shat0, inv_order, axis=1)
 
-    # Activate when diagnosis needed
-    # pd_LinearFitParam_ab=pd.DataFrame()
-    # plt.figure(1)
+        S0_fityear = pd.DataFrame(S0, index=pd_allMSR_Hourly100mEffectiveWindSpeeds_fityear.index, columns=ranks)
+        Shat0_fityear = pd.DataFrame(Shat0, index=pd_allMSR_Hourly100mEffectiveWindSpeeds_fityear.index, columns=ranks)
+        pd_allMSR_TimeSeriesProfilesCorrected_fityear = pd.DataFrame(corr, index=pd_allMSR_Hourly100mEffectiveWindSpeeds_fityear.index, columns=ranks)
+
+        return S0_fityear, Shat0_fityear, pd_allMSR_TimeSeriesProfilesCorrected_fityear
+    
+    # Phase 1: Rank wise fitting and extrapolation
+
+    # Compute the dependent variable x i.e. ERA5 annual mean wind speed of each MSR.
+    x = V0.mean(axis=1)                                                                               # (nMSR,)
+
+    # Compute the independent variable y i.e. sorted ERA5 wind speed of each MSR.
+    # Sort each MSR row in ascending order to obtain order statistics.
+    S0 = np.sort(V0, axis=1)                                                                          # (nMSR, TimeSteps)
+    S0_fityear = pd.DataFrame(S0, index=pd_allMSR_Hourly100mEffectiveWindSpeeds_fityear.index, columns=ranks)
 
     # Vectorised linear fitting
     # For each rank r, determine a and b by fitting y_r = a*x + b across MSRs.
     #   x: ERA5 annual mean wind speed of each MSR.
-    #   y_r: ERA5 wind speed at rank r of each MSR.
+    #   y: sorted ERA5 wind speed of each MSR for each rank.
 
-    x = pd_allMSR_ERA5mean.to_numpy(dtype=float)                # (nMSR,)
-    y = pd_allMSR_TimeSortedProfiles.to_numpy(dtype=float)      # (nMSR, TimeSteps)
-
-    x_mean = x.mean()
+    x_mean = x.mean()                                                    
     x_center = x - x_mean
     den = np.sum(x_center ** 2)
 
-    y_mean = y.mean(axis=0)                                     # (TimeSteps,)
-    y_center = y - y_mean
+    y = S0                                                                                      
+    y_mean = y.mean(axis=0)                                   
+    y_center = y - y_mean                                      
 
-    a = (x_center[:, None] * y_center).sum(axis=0) / den
-    b = y_mean - a * x_mean
+    a = (x_center[:, None] * y_center).sum(axis=0) / den         
+    b = y_mean - a * x_mean                                    
 
-    # Extrapolate to each MSRs GWA mean
-    gwa = pd_allMSR_GWAmean.to_numpy(dtype=float)              # (nMSR,)
-    y_gwa = gwa[:, None] * a[None, :] + b[None, :]
-
-    pd_allMSR_TimeSortedExtrapolatedProfiles.iloc[:, :] = y_gwa
-
-
-    # Activate when diagnosis needed.
-    # plt.figure(1)
-    # plt.plot(pd_allMSR_TimeSortedExtrapolatedProfiles.iloc[0, :])
-    # plt.figure(2)
-    # plt.plot(pd_allMSR_TimeSortedProfiles.iloc[0, :])
+    # For each rank r, compute the bias-corrected wind speed across MSRs using the linear fit parameters a and b.
+    gwa = gwa_mean.to_numpy(dtype=float)                                                               # (nMSR,)
+    Shat0 = gwa[:, None] * a[None, :] + b[None, :]
+    Shat0_fityear = pd.DataFrame(Shat0, index=pd_allMSR_Hourly100mEffectiveWindSpeeds_fityear.index, columns=ranks)
 
     # Phase 2: Mapping corrected ranks back to time series
     
-    # Compute the rank of each hourly value in the original/unsorted time series profile for each MSR.
-    orig = pd_allMSR_TimeSeriesProfiles.to_numpy(dtype=float)                       # (nMSR, T)
-    corr_sorted = pd_allMSR_TimeSortedExtrapolatedProfiles.to_numpy(dtype=float)    # (nMSR, T)
-    
     # For each MSR (row), compute the indices that would sort the original time series.
-    # order[z, k] = original index of the k-th smallest element in MSR z.
-    order = np.argsort(orig, axis=1, kind="mergesort")                              # (nMSR, T)
+    # order[i, k] = original time index of the k-th smallest element in MSR i.
+    order = np.argsort(V0, axis=1, kind="mergesort")           # (nMSR, TimeSteps)
 
+    # inv_order[i, t] = rank position of time index t in the sorted time series of MSR i.
     inv_order = np.empty_like(order)
     inv_order[np.arange(order.shape[0])[:, None], order] = np.arange(order.shape[1])[None, :]
 
-    corr = np.take_along_axis(corr_sorted, inv_order, axis=1)
+    # Use inv_order to map the sorted corrected profiles back to the original time series order. corr[i,t] = Shat0[i,k] where k is the rank position of time index t in MSR i.
+    corr = np.take_along_axis(Shat0, inv_order, axis=1)          # (nMSR, TimeSteps)
 
-    pd_allMSR_TimeSeriesProfilesCorrected = pd.DataFrame(
+    # Return corrected time series profiles as DataFrame
+    pd_allMSR_TimeSeriesProfilesCorrected_fityear = pd.DataFrame(corr, index=pd_allMSR_Hourly100mEffectiveWindSpeeds_fityear.index, columns=pd_allMSR_Hourly100mEffectiveWindSpeeds_fityear.columns)
+
+    return S0_fityear, Shat0_fityear, pd_allMSR_TimeSeriesProfilesCorrected_fityear
+
+# develop_allMSR_8760BiasCorrEffectiveWindSpeeds_year
+def develop_allMSR_8760BiasCorrEffectiveWindSpeeds_year(pd_allMSR_Hourly100mEffectiveWindSpeeds_year, S0_fityear, Shat0_fityear, TimeSteps):
+
+    Vy = pd_allMSR_Hourly100mEffectiveWindSpeeds_year.to_numpy(dtype=float)                                     # (nMSR, TimeSteps)
+
+    ranks = [i + 1 for i in range(TimeSteps)]                                                                   # (TimeSteps,)
+
+    S0 = S0_fityear.loc[pd_allMSR_Hourly100mEffectiveWindSpeeds_year.index, ranks].to_numpy(dtype=float)        # (nMSR, TimeSteps)
+    Shat0 = Shat0_fityear.loc[pd_allMSR_Hourly100mEffectiveWindSpeeds_year.index, ranks].to_numpy(dtype=float)  # (nMSR, TimeSteps)
+
+    # Single MSR case: simple linear scaling
+    if Vy.shape[0] == 1:
+
+        Sy = np.sort(Vy, axis=1)                                                                      # (1, TimeSteps)
+        Shaty = np.interp(Sy[0,:], S0[0,:], Shat0[0,:], left=Shat0[0,0], right=Shat0[0,-1])[None, :]
+
+        order = np.argsort(Vy, axis=1, kind="mergesort")
+        inv_order = np.empty_like(order)
+        inv_order[0, order[0, :]] = np.arange(TimeSteps)
+        corr = np.take_along_axis(Shaty, inv_order, axis=1)
+        pd_allMSR_TimeSeriesProfilesCorrected_year = pd.DataFrame(corr, index=pd_allMSR_Hourly100mEffectiveWindSpeeds_year.index, columns=pd_allMSR_Hourly100mEffectiveWindSpeeds_year.columns)
+        
+        return pd_allMSR_TimeSeriesProfilesCorrected_year
+    
+    # Phase 1: Sorting original time series
+    Sy = np.sort(Vy, axis=1)                                            
+
+    # Phase 2: 
+    idx = np.vstack([np.searchsorted(S0[i], Sy[i], side="left") for i in range(S0.shape[0])])                         
+
+    k = idx - 1
+    k = np.clip(k, 0, TimeSteps - 2)                               
+
+    S0_left = np.take_along_axis(S0, k, axis=1)                        
+    S0_right = np.take_along_axis(S0, k + 1, axis=1)                   
+
+    denom = np.maximum(S0_right - S0_left, 1e-12)                    
+    alpha = (Sy - S0_left) / denom                   
+
+    Shat0_left = np.take_along_axis(Shat0, k, axis=1)
+    Shat0_right = np.take_along_axis(Shat0, k + 1, axis=1)
+
+    Shaty = (1 - alpha) * Shat0_left + alpha * Shat0_right
+
+    # Clamp tails
+    below_min = (idx == 0)
+    above_max = (idx == TimeSteps)
+
+    Shaty = np.where(below_min, Shat0[:, [0]], Shaty)
+    Shaty = np.where(above_max, Shat0[:, [-1]], Shaty)
+
+    # Phase 3: Mapping corrected ranks back to time series
+
+    # For each MSR (row), compute the indices that would sort the original time series.
+    # order[i, k] = original time index of the k-th smallest element in MSR i.
+    order = np.argsort(Vy, axis=1, kind="mergesort")           # (nMSR, TimeSteps)
+
+    # inv_order[i, t] = rank position of time index t in the sorted time series of MSR i.
+    inv_order = np.empty_like(order)
+    inv_order[np.arange(order.shape[0])[:, None], order] = np.arange(order.shape[1])[None, :]
+
+    # Use inv_order to map the sorted corrected profiles back to the original time series order.
+    corr = np.take_along_axis(Shaty, inv_order, axis=1)          # (nMSR, TimeSteps)
+
+    # Return corrected time series profiles as DataFrame
+    pd_allMSR_TimeSeriesProfilesCorrected_year = pd.DataFrame(
         corr,
-        index=pd_allMSR_TimeSeriesProfiles.index,
-        columns=pd_allMSR_TimeSeriesProfiles.columns
+        index=pd_allMSR_Hourly100mEffectiveWindSpeeds_year.index,
+        columns=pd_allMSR_Hourly100mEffectiveWindSpeeds_year.columns
     )
-    # pd_allMSR_TimeSeriesProfileRanks = pd_allMSR_TimeSeriesProfiles.rank(ascending=True, 
-    #                                                                      method='first',
-    #                                                                      axis=1)
 
-    # # Allocate dataframe for the corrected time series profiles.
-    # pd_allMSR_TimeSeriesProfilesCorrected = pd.DataFrame().reindex_like(pd_allMSR_TimeSeriesProfiles)  # copy dataset format
-
-    # # Reverse mapping.
-    # # For each MSR (z), map the ranked original time series value to the corresponding extrapolated value from the sorted corrected profiles.
-    # for z in range(0, len(pd_allMSR_TimeSeriesProfiles)):  # MSR wise loop
-    #     pd_allMSR_TimeSeriesProfilesCorrected.iloc[z, :] = pd_allMSR_TimeSeriesProfileRanks.iloc[z, :].map(
-    #         pd_allMSR_TimeSortedExtrapolatedProfiles.iloc[z, :])
-
-    return pd_allMSR_TimeSeriesProfilesCorrected
+    return pd_allMSR_TimeSeriesProfilesCorrected_year
 
 def CreateLocalTimeProfile(pd_UTC, pd_CountryUTC_offsets, country_withspaces):
 
@@ -306,8 +387,11 @@ ControlConfigurations=pd.read_excel('ControlFile_ProfileGenerator.xlsx', sheet_n
 pd_CountryUTC_offsets=pd.read_excel('ControlFile_ProfileGenerator.xlsx', sheet_name="CountryUTC_Offset_InUse")
 
 # Load paths
-np_ERA5Data_Inst=Dataset(ControlPathsAndNames.loc["ERA5DataFilePath_Inst"][0])
-np_ERA5Data_Acc=Dataset(ControlPathsAndNames.loc["ERA5DataFilePath_Acc"][0])
+ERA5Data_Inst_folder=ControlPathsAndNames.loc["ERA5DataFilePath_Inst"][0]
+ERA5Data_Acc_folder=ControlPathsAndNames.loc["ERA5DataFilePath_Acc"][0]
+ERA5Data_fityear=int(ControlPathsAndNames.loc["ERA5Data_fityear"][0])
+ERA5Data_startyear=int(ControlPathsAndNames.loc["ERA5Data_startyear"][0])
+ERA5Data_endyear=int(ControlPathsAndNames.loc["ERA5Data_endyear"][0])
 pd_WindSpeed_to_Power = pd.read_csv(ControlPathsAndNames.loc["ThreeIEC_TurbinePowerCurves"][0])
 AllCountries=pd.read_csv(ControlPathsAndNames.loc["FileAddress_CountryNamesList"][0],names=["Ct"])
 Input_MSR_Folder=ControlPathsAndNames.loc["Input_MSR_Folder"][0]
@@ -319,19 +403,19 @@ SolarPVNameConvention=ControlPathsAndNames.loc["SolarPVNameConvention"][0]
 WindNameConvention=ControlPathsAndNames.loc["WindNameConvention"][0]
 TimeSteps=int(ControlPathsAndNames.loc["TimeSteps"][0])
 
+np_ERA5Data_Inst_dict, np_ERA5Data_Acc_dict = ReadERA5Data(ERA5Data_Inst_folder, ERA5Data_Acc_folder, ERA5Data_startyear, ERA5Data_endyear)
+
 print("Inputs loaded from control file")
-print(f"ERA5 instantaneous variables {list(np_ERA5Data_Inst.variables.keys())}")
-print(f"ERA5 accumulative variables: {list(np_ERA5Data_Acc.variables.keys())}")
 print(f"Creating time series profiles for country: {AllCountries['Ct'].tolist()}")
+print(f"ERA5 instantaneous variables{list(np_ERA5Data_Inst_dict[ERA5Data_fityear].variables.keys())}")
+print(f"ERA5 accumulated variables{list(np_ERA5Data_Acc_dict[ERA5Data_fityear].variables.keys())}")
 
-inst_steps = len(np_ERA5Data_Inst.dimensions["valid_time"])
-acc_steps = len(np_ERA5Data_Acc.dimensions["valid_time"])
-
+inst_steps = len(np_ERA5Data_Inst_dict[ERA5Data_fityear].dimensions["valid_time"])
+acc_steps = len(np_ERA5Data_Acc_dict[ERA5Data_fityear].dimensions["valid_time"])
 if int(TimeSteps) != inst_steps or int(TimeSteps) != acc_steps:
     raise ValueError(
         f"TimeSteps mismatch: ControlFile TimeSteps={int(TimeSteps)},"
         f"ERA5 Inst timesteps={inst_steps}, ERA5 Acc timesteps{acc_steps}")
-print(f"Creating time series profiles for {TimeSteps} timesteps")
 
 # Load configurations
 RE_TechnologyList=[] # naming as per three technology names for which MSR creator code creates MSRs
@@ -358,224 +442,241 @@ if not os.path.isdir(OutputFolder_UTCProfiles):
 if not os.path.isdir(OutputFolder_LocalTime):
     os.makedirs(OutputFolder_LocalTime)
 
-for CountryCounter in range(0,len(AllCountries)):   # country wise loop
-    country_withspaces=AllCountries.Ct[CountryCounter]
-    country = AllCountries.Ct[CountryCounter].replace(" ", "")
-    MSR_CountryFolder=os.path.join(Input_MSR_Folder, country)
+S0_fityear = Shat0_fityear = None
+years = [ERA5Data_fityear] + [y for y in range(ERA5Data_startyear, ERA5Data_endyear + 1) if y != ERA5Data_fityear]
 
-    OutputCountryFolder_UTC=os.path.join(OutputFolder_UTCProfiles, country)
-    if not os.path.isdir(OutputCountryFolder_UTC):
-        os.makedirs(OutputCountryFolder_UTC)
+for year in years:
 
-    OutputCountryFolder_LocalTime = os.path.join(OutputFolder_LocalTime, country)
-    if not os.path.isdir(OutputCountryFolder_LocalTime):
-        os.makedirs(OutputCountryFolder_LocalTime)
+    np_ERA5Data_Inst = np_ERA5Data_Inst_dict[year]
+    np_ERA5Data_Acc = np_ERA5Data_Acc_dict[year]
+    print(f"Processing ERA5 year {year}")
 
-    for TechCounter in range (0,len(RE_TechnologyList)):
-        RE=RE_TechnologyList[TechCounter]
-        ResourceRasterName=ResourceRasterNameList[TechCounter]
+    for CountryCounter in range(0,len(AllCountries)):   # country wise loop
+        country_withspaces=AllCountries.Ct[CountryCounter]
+        country = AllCountries.Ct[CountryCounter].replace(" ", "")
+        MSR_CountryFolder=os.path.join(Input_MSR_Folder, country)
 
+        OutputCountryFolder_UTC=os.path.join(OutputFolder_UTCProfiles, country)
+        if not os.path.isdir(OutputCountryFolder_UTC):
+            os.makedirs(OutputCountryFolder_UTC)
 
-        # Read RE MSR information
-        try:
-            shapefile_path = os.path.join(MSR_CountryFolder, MSR_DataCarryingSubFolderName, f"{RE}_FinalMSRs.shp")
-            raster_path = os.path.join(MSR_CountryFolder, ResourceRasterCarryingSubFolderName, f"{ResourceRasterName}_projected.tif")
-            gpd_MSR_Attributes = gpd.read_file(shapefile_path)
-            # Get stats of resource value across each MSR as Json dictionary (dc)
-            dc_ResourceStatsAcrossMSR = zonal_stats(
-                                    shapefile_path,
-                                    raster_path,
-                                    stats="count min mean max median sum")
-            gpd_MSR_Attributes['Longitude'] =  gpd_MSR_Attributes.to_crs('EPSG:4326').centroid.x
-            gpd_MSR_Attributes['Latitude'] =  gpd_MSR_Attributes.to_crs('EPSG:4326').centroid.y
-            gpd_MSR_Attributes = gpd_MSR_Attributes.drop(['geometry'], axis=1)
+        OutputCountryFolder_LocalTime = os.path.join(OutputFolder_LocalTime, country)
+        if not os.path.isdir(OutputCountryFolder_LocalTime):
+            os.makedirs(OutputCountryFolder_LocalTime)
+
+        for TechCounter in range (0,len(RE_TechnologyList)):
+            RE=RE_TechnologyList[TechCounter]
+            ResourceRasterName=ResourceRasterNameList[TechCounter]
 
 
-            # Find nearest neighbors of MSR coordinates in ERA5 data set
-            ERA5Locations=list(itertools.product(np_ERA5Data_Inst.variables["latitude"][:],np_ERA5Data_Inst.variables["longitude"][:]))
-            MSR_CentroidLocations=list(zip(gpd_MSR_Attributes.Latitude,gpd_MSR_Attributes.Longitude))
-            ERA5Grid = spatial.cKDTree(ERA5Locations)
-            dist, indexes = ERA5Grid.query(MSR_CentroidLocations)
-            ERA5Locations_near_MSR_CentroidLocations= np.array(ERA5Locations)[indexes]
-            gpd_MSR_Attributes["ERA5Latitude"]=ERA5Locations_near_MSR_CentroidLocations[:,0]
-            gpd_MSR_Attributes["ERA5Longitude"]=ERA5Locations_near_MSR_CentroidLocations[:,1]
-            np_lon = np_ERA5Data_Inst.variables["longitude"][:]
-            np_lat = np_ERA5Data_Inst.variables["latitude"][:]
+            # Read RE MSR information
+            try:
+                shapefile_path = os.path.join(MSR_CountryFolder, MSR_DataCarryingSubFolderName, f"{RE}_FinalMSRs.shp")
+                raster_path = os.path.join(MSR_CountryFolder, ResourceRasterCarryingSubFolderName, f"{ResourceRasterName}_projected.tif")
+                gpd_MSR_Attributes = gpd.read_file(shapefile_path)
+                # Get stats of resource value across each MSR as Json dictionary (dc)
+                dc_ResourceStatsAcrossMSR = zonal_stats(
+                                        shapefile_path,
+                                        raster_path,
+                                        stats="count min mean max median sum")
+                gpd_MSR_Attributes['Longitude'] =  gpd_MSR_Attributes.to_crs('EPSG:4326').centroid.x
+                gpd_MSR_Attributes['Latitude'] =  gpd_MSR_Attributes.to_crs('EPSG:4326').centroid.y
+                gpd_MSR_Attributes = gpd_MSR_Attributes.drop(['geometry'], axis=1)
 
 
-            # Declare variables to run subprograms that get capacity factor profiles from resource values for each MSR
-            np_allMSR_HourlyCF=np.zeros((len(gpd_MSR_Attributes),TimeSteps))
+                # Find nearest neighbors of MSR coordinates in ERA5 data set
+                ERA5Locations=list(itertools.product(np_ERA5Data_Inst.variables["latitude"][:],np_ERA5Data_Inst.variables["longitude"][:]))
+                MSR_CentroidLocations=list(zip(gpd_MSR_Attributes.Latitude,gpd_MSR_Attributes.Longitude))
+                ERA5Grid = spatial.cKDTree(ERA5Locations)
+                dist, indexes = ERA5Grid.query(MSR_CentroidLocations)
+                ERA5Locations_near_MSR_CentroidLocations= np.array(ERA5Locations)[indexes]
+                gpd_MSR_Attributes["ERA5Latitude"]=ERA5Locations_near_MSR_CentroidLocations[:,0]
+                gpd_MSR_Attributes["ERA5Longitude"]=ERA5Locations_near_MSR_CentroidLocations[:,1]
+                np_lon = np_ERA5Data_Inst.variables["longitude"][:]
+                np_lat = np_ERA5Data_Inst.variables["latitude"][:]
 
-            np_allMSR_HourlyWindSpeeds_corrected_ResultantVector = np.zeros((len(gpd_MSR_Attributes), TimeSteps)) # [m/s]
-            np_allMSR_HourlyWindSpeeds_uncorrected_ResultantVector = np.zeros((len(gpd_MSR_Attributes), TimeSteps))  # [m/s]
-            np_allMSR_HourlyGHI = np.zeros((len(gpd_MSR_Attributes), TimeSteps)) # [Wh]
-            np_allMSR_HourlyGHI_corrected_Wh=np.zeros((len(gpd_MSR_Attributes), TimeSteps))
 
-            # Initialize datasets for wind bias correction
-            np_allMSR_ERA5_AnnualMean=np.zeros(len(gpd_MSR_Attributes))
-            np_allMSR_Wind_GWA_MSR_Mean = np.zeros(len(gpd_MSR_Attributes))
+                # Declare variables to run subprograms that get capacity factor profiles from resource values for each MSR
+                np_allMSR_HourlyCF=np.zeros((len(gpd_MSR_Attributes),TimeSteps))
 
-            # Initialize datasets for solar bias correction
-            np_allMSR_GHI_ERA5OriginalAnnualYield = np.zeros(len(gpd_MSR_Attributes))
-            np_allMSR_GHI_GSA_MSR_Mean = np.zeros(len(gpd_MSR_Attributes))
-            np_allMSR_BiasCorrection_GHI_Adder_Wh = np.zeros(len(gpd_MSR_Attributes))
+                np_allMSR_HourlyWindSpeeds_corrected_ResultantVector = np.zeros((len(gpd_MSR_Attributes), TimeSteps)) # [m/s]
+                np_allMSR_HourlyWindSpeeds_uncorrected_ResultantVector = np.zeros((len(gpd_MSR_Attributes), TimeSteps))  # [m/s]
+                np_allMSR_HourlyGHI = np.zeros((len(gpd_MSR_Attributes), TimeSteps)) # [Wh]
+                np_allMSR_HourlyGHI_corrected_Wh=np.zeros((len(gpd_MSR_Attributes), TimeSteps))
 
-            if flag_RunBiasCorrCode and RE==WindNameConvention:
-                # Get effective windspeeds, 8760 Bias Corrected
-                # Make all MSR timeseries profiles
-                pd_allMSR_Hourly100mEffectiveWindSpeeds=pd.DataFrame()
-                rows = []
-                for MSR_Counter in range(0, len(gpd_MSR_Attributes)): # MSR wise loop
-                    print(f"appending effective ERA5 speed dataset MSR {MSR_Counter}")
+                # Initialize datasets for wind bias correction
+                np_allMSR_ERA5_AnnualMean=np.zeros(len(gpd_MSR_Attributes))
+                np_allMSR_Wind_GWA_MSR_Mean = np.zeros(len(gpd_MSR_Attributes))
 
-                    lat = ERA5Locations_near_MSR_CentroidLocations[MSR_Counter, 0]
-                    lon = ERA5Locations_near_MSR_CentroidLocations[MSR_Counter, 1]
+                # Initialize datasets for solar bias correction
+                np_allMSR_GHI_ERA5OriginalAnnualYield = np.zeros(len(gpd_MSR_Attributes))
+                np_allMSR_GHI_GSA_MSR_Mean = np.zeros(len(gpd_MSR_Attributes))
+                np_allMSR_BiasCorrection_GHI_Adder_Wh = np.zeros(len(gpd_MSR_Attributes))
+
+                if flag_RunBiasCorrCode and RE==WindNameConvention:
+                    # Get effective windspeeds, 8760 Bias Corrected
+                    # Make all MSR timeseries profiles
+                    pd_allMSR_Hourly100mEffectiveWindSpeeds=pd.DataFrame()
+                    rows = []
+                    for MSR_Counter in range(0, len(gpd_MSR_Attributes)): # MSR wise loop
+                        print(f"appending effective ERA5 speed dataset MSR {MSR_Counter}")
+
+                        lat = ERA5Locations_near_MSR_CentroidLocations[MSR_Counter, 0]
+                        lon = ERA5Locations_near_MSR_CentroidLocations[MSR_Counter, 1]
+                        index_lat = np.where(np_lat == lat)[0][0]
+                        index_lon = np.where(np_lon == lon)[0][0]
+
+                        u=np_ERA5Data_Inst.variables["u100"][:,index_lat, index_lon]
+                        v=np_ERA5Data_Inst.variables["v100"][:,index_lat, index_lon]
+
+                        speed = np.sqrt(u*u + v*v)
+                        speed = np.atleast_1d(speed)
+
+                        rows.append(speed[None, :])
+                        
+                    pd_allMSR_Hourly100mEffectiveWindSpeeds=pd.DataFrame(np.vstack(rows))
+                    
+                    stats_df = pd.DataFrame(dc_ResourceStatsAcrossMSR)
+                    pd_Wind_GWA_MSR_Mean = stats_df["mean"].fillna(stats_df["mean"].mean()) # double checked, as long the MSR ids are numbered 0,1,2..., this command puts right mean to right table cell
+                    # Get corrected 100m wind speeds, rows=MSRs, columns=hours
+
+                    if year == ERA5Data_fityear:
+                        print(f"Fit year {year}: Calculate bias-corrected time series and fit parameters")
+                        S0_fityear, Shat0_fityear, pd_allMSR_Hourly100m8760BiasCorrEffectiveWindSpeeds=develop_allMSR_8760BiasCorrEffectiveWindSpeeds_fityear(pd_allMSR_Hourly100mEffectiveWindSpeeds, pd_Wind_GWA_MSR_Mean, TimeSteps)
+                    
+                    else:
+                        if S0_fityear is None or Shat0_fityear is None:
+                            raise RuntimeError("Fit year bias-correction not available.")
+                        
+                        print(f"Non-fit year {year}: Apply bias-correction using fit parameters from fit year {ERA5Data_fityear}")
+                        pd_allMSR_Hourly100m8760BiasCorrEffectiveWindSpeeds=develop_allMSR_8760BiasCorrEffectiveWindSpeeds_year(pd_allMSR_Hourly100mEffectiveWindSpeeds, S0_fityear, Shat0_fityear, TimeSteps)
+
+                for MSR_Counter in range(0,len(gpd_MSR_Attributes)): #MSR wise loop
+                    lat=ERA5Locations_near_MSR_CentroidLocations[MSR_Counter,0]
+                    lon=ERA5Locations_near_MSR_CentroidLocations[MSR_Counter,1]
                     index_lat = np.where(np_lat == lat)[0][0]
                     index_lon = np.where(np_lon == lon)[0][0]
+                    np_Hourly2meterTemperature = np_ERA5Data_Inst.variables["t2m"][:, index_lat, index_lon]
 
-                    u=np_ERA5Data_Inst.variables["u100"][:,index_lat, index_lon]
-                    v=np_ERA5Data_Inst.variables["v100"][:,index_lat, index_lon]
+                    if RE==SolarPVNameConvention:
+                        np_HourlyGHI = np_ERA5Data_Acc.variables["ssrd"][:, index_lat, index_lon]
+                        GSA_GHI_MSR_Mean=dc_ResourceStatsAcrossMSR[MSR_Counter]['mean']
+                        if not GSA_GHI_MSR_Mean:
+                            GSA_GHI_MSR_Mean=np.sum(np_HourlyGHI)*(24/TimeSteps)
 
-                    speed = np.sqrt(u*u + v*v)
-                    speed = np.atleast_1d(speed)
+                        np_HourlyCF, GHI_corrected_wh, BiasCorrection_GHI_Adder_Wh, ERA5_GHI_OriginalAnnualYield=ComputeHourlyCF_SolarPV(GSA_GHI_MSR_Mean,np_Hourly2meterTemperature,np_HourlyGHI)
 
-                    rows.append(speed[None, :])
-                    
-                pd_allMSR_Hourly100mEffectiveWindSpeeds=pd.DataFrame(np.vstack(rows))
-                
-                stats_df = pd.DataFrame(dc_ResourceStatsAcrossMSR)
-                pd_Wind_GWA_MSR_Mean = stats_df["mean"].fillna(stats_df["mean"].mean()) # double checked, as long the MSR ids are numbered 0,1,2..., this command puts right mean to right table cell
-                # Get corrected 100m wind speeds, rows=MSRs, columns=hours
-                print("Creating bias-corrected wind speed profiles for all MSRs")
-                pd_allMSR_Hourly100m8760BiasCorrEffectiveWindSpeeds=develop_allMSR_8760BiasCorrEffectiveWindSpeeds(pd_allMSR_Hourly100mEffectiveWindSpeeds, pd_Wind_GWA_MSR_Mean)
+                        np_HourlyCF=np.round(np_HourlyCF,decimals=3)
+                        np_HourlyGHI = np.round(np_HourlyGHI/3600, decimals=3) #display in Watt Hours because the GHI biascorrect adder is also in Wh
+                        np_HourlyGHI_corrected_Wh = np.round(GHI_corrected_wh, decimals=3) # In Watt Hours because the GHI biascorrect adder is also in Wh
+
+                        np_allMSR_HourlyCF[MSR_Counter]=np_HourlyCF
+                        np_allMSR_HourlyGHI[MSR_Counter] = np_HourlyGHI
+                        np_allMSR_HourlyGHI_corrected_Wh[MSR_Counter]=np_HourlyGHI_corrected_Wh
+                        np_allMSR_GHI_ERA5OriginalAnnualYield[MSR_Counter] = ERA5_GHI_OriginalAnnualYield
+                        np_allMSR_GHI_GSA_MSR_Mean[MSR_Counter]= GSA_GHI_MSR_Mean*(TimeSteps/24) #converting per day yield of Solar GIS to annual
+                        np_allMSR_BiasCorrection_GHI_Adder_Wh[MSR_Counter]=BiasCorrection_GHI_Adder_Wh
+
+                    if RE==WindNameConvention:
+                        np_HourlyU100mEastward=np_ERA5Data_Inst.variables["u100"][:,index_lat, index_lon]
+                        np_HourlyV100mNorthward = np_ERA5Data_Inst.variables["v100"][:, index_lat, index_lon]
+                        np_HourlyU10mEastward = np_ERA5Data_Inst.variables["u10"][:, index_lat, index_lon]
+                        np_HourlyV10mNorthward = np_ERA5Data_Inst.variables["v10"][:, index_lat, index_lon]
+                        Wind_GWA_MSR_Mean=dc_ResourceStatsAcrossMSR[MSR_Counter]['mean']
+                        BiasCorrEffectiveWindSpeeds= pd_allMSR_Hourly100m8760BiasCorrEffectiveWindSpeeds.iloc[MSR_Counter, :]
+                        if not Wind_GWA_MSR_Mean:
+                            Wind_GWA_MSR_Mean=pd.DataFrame(dc_ResourceStatsAcrossMSR)['mean'].mean()
+                        elevation=np_ERA5Data_Inst.variables["z"][0, index_lat, index_lon]/9.80665 #see orography variable description in https://cds.climate.copernicus.eu/cdsapp#!/dataset/reanalysis-era5-single-levels-monthly-means?tab=overview
+
+                        np_HourlyCF, np_HourlyWindSpeeds_ResultantVector, np_HourlyWindSpeeds_UnCorrected_ResultantVector, ERA5_AnnualMean=ComputeHourlyCF_Wind(BiasCorrEffectiveWindSpeeds, np_HourlyU100mEastward, np_HourlyU10mEastward, np_HourlyV100mNorthward, np_HourlyV10mNorthward, WindTurbineHeight_meters, np_Hourly2meterTemperature, elevation, pd_WindSpeed_to_Power)
 
 
-            for MSR_Counter in range(0,len(gpd_MSR_Attributes)): #MSR wise loop
-                lat=ERA5Locations_near_MSR_CentroidLocations[MSR_Counter,0]
-                lon=ERA5Locations_near_MSR_CentroidLocations[MSR_Counter,1]
-                index_lat = np.where(np_lat == lat)[0][0]
-                index_lon = np.where(np_lon == lon)[0][0]
-                np_Hourly2meterTemperature = np_ERA5Data_Inst.variables["t2m"][:, index_lat, index_lon]
+                        np_HourlyCF = np.round(np_HourlyCF, decimals=3)
+                        np_HourlyWindSpeeds_ResultantVector = np.round(np_HourlyWindSpeeds_ResultantVector, decimals=3)
+                        np_HourlyWindSpeeds_UnCorrected_ResultantVector = np.round(np_HourlyWindSpeeds_UnCorrected_ResultantVector, decimals=3)
 
+                        np_allMSR_HourlyCF[MSR_Counter] = np_HourlyCF
+                        np_allMSR_HourlyWindSpeeds_corrected_ResultantVector[MSR_Counter] = np_HourlyWindSpeeds_ResultantVector
+                        np_allMSR_HourlyWindSpeeds_uncorrected_ResultantVector[MSR_Counter] = np_HourlyWindSpeeds_UnCorrected_ResultantVector
+                        np_allMSR_ERA5_AnnualMean[MSR_Counter] = ERA5_AnnualMean
+                        np_allMSR_Wind_GWA_MSR_Mean[MSR_Counter]= Wind_GWA_MSR_Mean
+                    print(f"{MSR_Counter} MSR {RE}")
+
+                # Prepare the data set and export to xlsx
+                pd_output = gpd_MSR_Attributes
+                pd_output.rename(columns={"FID": "MSR_ID"}, inplace=True)
+                HourTags = [f'H{i}' for i in range(1, TimeSteps+1)]
                 if RE==SolarPVNameConvention:
-                    np_HourlyGHI = np_ERA5Data_Acc.variables["ssrd"][:, index_lat, index_lon]
-                    GSA_GHI_MSR_Mean=dc_ResourceStatsAcrossMSR[MSR_Counter]['mean']
-                    if not GSA_GHI_MSR_Mean:
-                        GSA_GHI_MSR_Mean=np.sum(np_HourlyGHI)*(24/TimeSteps)
+                    print("creating solarpv files")
+                    pd_SolarBiasInformation = pd.DataFrame(
+                        {"ERA_GHI KWh/m2/yr": np_allMSR_GHI_ERA5OriginalAnnualYield, "GSA_GHI KWh/m2/yr": np_allMSR_GHI_GSA_MSR_Mean,
+                        'BiasCorrection Adder Wh for solar hours': np_allMSR_BiasCorrection_GHI_Adder_Wh})
+                    if flag_Diagnosis:
+                        pd_output_diagnosis = pd.concat(
+                            [pd_output,
+                            pd_SolarBiasInformation,
+                            pd.DataFrame(np_allMSR_HourlyGHI_corrected_Wh,
+                                        columns=HourTags)],
+                                        axis=1)
+                        output_path = os.path.join(OutputCountryFolder_UTC, f"{country} {RE} BiasCorrected ResourceProfiles.csv")
+                        pd_output_diagnosis.to_csv(output_path, index=False, sep=";")
+                        print(f"{country} {RE} BiasCorrected ResourceProfiles.csv created")
 
-                    np_HourlyCF, GHI_corrected_wh, BiasCorrection_GHI_Adder_Wh, ERA5_GHI_OriginalAnnualYield=ComputeHourlyCF_SolarPV(GSA_GHI_MSR_Mean,np_Hourly2meterTemperature,np_HourlyGHI)
-
-                    np_HourlyCF=np.round(np_HourlyCF,decimals=3)
-                    np_HourlyGHI = np.round(np_HourlyGHI/3600, decimals=3) #display in Watt Hours because the GHI biascorrect adder is also in Wh
-                    np_HourlyGHI_corrected_Wh = np.round(GHI_corrected_wh, decimals=3) # In Watt Hours because the GHI biascorrect adder is also in Wh
-
-                    np_allMSR_HourlyCF[MSR_Counter]=np_HourlyCF
-                    np_allMSR_HourlyGHI[MSR_Counter] = np_HourlyGHI
-                    np_allMSR_HourlyGHI_corrected_Wh[MSR_Counter]=np_HourlyGHI_corrected_Wh
-                    np_allMSR_GHI_ERA5OriginalAnnualYield[MSR_Counter] = ERA5_GHI_OriginalAnnualYield
-                    np_allMSR_GHI_GSA_MSR_Mean[MSR_Counter]= GSA_GHI_MSR_Mean*(TimeSteps/24) #converting per day yield of Solar GIS to annual
-                    np_allMSR_BiasCorrection_GHI_Adder_Wh[MSR_Counter]=BiasCorrection_GHI_Adder_Wh
+                    pd_output = pd.concat(
+                        [pd_output,
+                        pd_SolarBiasInformation,
+                        pd.DataFrame(np_allMSR_HourlyCF, columns=HourTags)], axis=1)
+                    FileAddressCountryProfile_UTC = os.path.join(OutputCountryFolder_UTC, f"{country} {RE} {year} CFs.csv")
+                    pd_output.to_csv(FileAddressCountryProfile_UTC, index=False, sep=";")
+                    print(f"UTC-->{country} {RE} {year} CFs.csv created")
 
                 if RE==WindNameConvention:
-                    np_HourlyU100mEastward=np_ERA5Data_Inst.variables["u100"][:,index_lat, index_lon]
-                    np_HourlyV100mNorthward = np_ERA5Data_Inst.variables["v100"][:, index_lat, index_lon]
-                    np_HourlyU10mEastward = np_ERA5Data_Inst.variables["u10"][:, index_lat, index_lon]
-                    np_HourlyV10mNorthward = np_ERA5Data_Inst.variables["v10"][:, index_lat, index_lon]
-                    Wind_GWA_MSR_Mean=dc_ResourceStatsAcrossMSR[MSR_Counter]['mean']
-                    BiasCorrEffectiveWindSpeeds= pd_allMSR_Hourly100m8760BiasCorrEffectiveWindSpeeds.iloc[MSR_Counter, :]
-                    if not Wind_GWA_MSR_Mean:
-                        Wind_GWA_MSR_Mean=pd.DataFrame(dc_ResourceStatsAcrossMSR)['mean'].mean()
-                    elevation=np_ERA5Data_Inst.variables["z"][0, index_lat, index_lon]/9.80665 #see orography variable description in https://cds.climate.copernicus.eu/cdsapp#!/dataset/reanalysis-era5-single-levels-monthly-means?tab=overview
+                    print("creating wind files")
+                    pd_WindBiasInformation = pd.DataFrame(
+                        {"GWA Annual MSR Mean m/s": np_allMSR_Wind_GWA_MSR_Mean,
+                        "ERA-Raw Annual Mean Speed m/s":np_allMSR_ERA5_AnnualMean})
+                    
+                    if flag_Diagnosis:
+                        pd_output_diagnosis = pd.concat(
+                            [pd_output,
+                            pd_WindBiasInformation,
+                            pd.DataFrame(np_allMSR_HourlyWindSpeeds_corrected_ResultantVector,
+                                        columns=HourTags)],
+                                        axis=1)
+                        output_path = os.path.join(OutputCountryFolder_UTC, f"{country} {RE} {WindTurbineHeight_meters}m BiasCorrected ResourceProfiles.csv")
+                        pd_output_diagnosis.to_csv(output_path, index=False, sep=";")
+                        print(f"{country} {RE} corrected resource profiles.csv created")
 
-                    np_HourlyCF, np_HourlyWindSpeeds_ResultantVector, np_HourlyWindSpeeds_UnCorrected_ResultantVector, ERA5_AnnualMean=ComputeHourlyCF_Wind(BiasCorrEffectiveWindSpeeds, np_HourlyU100mEastward, np_HourlyU10mEastward, np_HourlyV100mNorthward, np_HourlyV10mNorthward, WindTurbineHeight_meters, np_Hourly2meterTemperature, elevation, pd_WindSpeed_to_Power)
+                        pd_output_diagnosis = pd.concat(
+                            [pd_output, pd_WindBiasInformation, pd.DataFrame(np_allMSR_HourlyWindSpeeds_uncorrected_ResultantVector, columns=HourTags)], axis=1)
+                        output_path = os.path.join(OutputCountryFolder_UTC, f"{country} {RE} {WindTurbineHeight_meters}m UnCorrected ResourceProfiles.csv")
+                        pd_output_diagnosis.to_csv(output_path, index=False, sep=";")
+                        print(f"{country} {RE} uncorrected resource profiles.csv created")
 
-
-                    np_HourlyCF = np.round(np_HourlyCF, decimals=3)
-                    np_HourlyWindSpeeds_ResultantVector = np.round(np_HourlyWindSpeeds_ResultantVector, decimals=3)
-                    np_HourlyWindSpeeds_UnCorrected_ResultantVector = np.round(np_HourlyWindSpeeds_UnCorrected_ResultantVector, decimals=3)
-
-                    np_allMSR_HourlyCF[MSR_Counter] = np_HourlyCF
-                    np_allMSR_HourlyWindSpeeds_corrected_ResultantVector[MSR_Counter] = np_HourlyWindSpeeds_ResultantVector
-                    np_allMSR_HourlyWindSpeeds_uncorrected_ResultantVector[MSR_Counter] = np_HourlyWindSpeeds_UnCorrected_ResultantVector
-                    np_allMSR_ERA5_AnnualMean[MSR_Counter] = ERA5_AnnualMean
-                    np_allMSR_Wind_GWA_MSR_Mean[MSR_Counter]= Wind_GWA_MSR_Mean
-                print(f"{MSR_Counter} MSR {RE}")
-
-            # Prepare the data set and export to xlsx
-            pd_output = gpd_MSR_Attributes
-            pd_output.rename(columns={"FID": "MSR_ID"}, inplace=True)
-            HourTags = [f'H{i}' for i in range(1, TimeSteps+1)]
-            if RE==SolarPVNameConvention:
-                print("creating solarpv files")
-                pd_SolarBiasInformation = pd.DataFrame(
-                    {"ERA_GHI KWh/m2/yr": np_allMSR_GHI_ERA5OriginalAnnualYield, "GSA_GHI KWh/m2/yr": np_allMSR_GHI_GSA_MSR_Mean,
-                     'BiasCorrection Adder Wh for solar hours': np_allMSR_BiasCorrection_GHI_Adder_Wh})
-                if flag_Diagnosis:
-                    pd_output_diagnosis = pd.concat(
+                    pd_output = pd.concat(
                         [pd_output,
-                         pd_SolarBiasInformation,
-                         pd.DataFrame(np_allMSR_HourlyGHI_corrected_Wh,
-                                      columns=HourTags)],
-                                      axis=1)
-                    output_path = os.path.join(OutputCountryFolder_UTC, f"{country} {RE} BiasCorrected ResourceProfiles.csv")
-                    pd_output_diagnosis.to_csv(output_path, index=False, sep=";")
-                    print(f"{country} {RE} BiasCorrected ResourceProfiles.csv created")
+                        pd_WindBiasInformation,
+                        pd.DataFrame(np_allMSR_HourlyCF,
+                                    columns=HourTags)],
+                                    axis=1)
+                    FileAddressCountryProfile_UTC = os.path.join(OutputCountryFolder_UTC,f"{country} {RE} {WindTurbineHeight_meters}m {year} CFs.csv")
+                    pd_output.to_csv(FileAddressCountryProfile_UTC, index=False, sep=";")
+                    print(f"UTC-->{country} {RE} {year} CFs.csv created")
 
-                pd_output = pd.concat(
-                    [pd_output,
-                     pd_SolarBiasInformation,
-                     pd.DataFrame(np_allMSR_HourlyCF, columns=HourTags)], axis=1)
-                FileAddressCountryProfile_UTC = os.path.join(OutputCountryFolder_UTC, f"{country} {RE} CFs.csv")
-                pd_output.to_csv(FileAddressCountryProfile_UTC, index=False, sep=";")
-                print(f"UTC-->{country} {RE} CFs.csv created")
+                pd_UTC = pd.read_csv(FileAddressCountryProfile_UTC, sep=";")
 
-            if RE==WindNameConvention:
-                print("creating wind files")
-                pd_WindBiasInformation = pd.DataFrame(
-                    {"GWA Annual MSR Mean m/s": np_allMSR_Wind_GWA_MSR_Mean,
-                     "ERA-Raw Annual Mean Speed m/s":np_allMSR_ERA5_AnnualMean})
-                
-                if flag_Diagnosis:
-                    pd_output_diagnosis = pd.concat(
-                        [pd_output,
-                         pd_WindBiasInformation,
-                         pd.DataFrame(np_allMSR_HourlyWindSpeeds_corrected_ResultantVector,
-                                      columns=HourTags)],
-                                      axis=1)
-                    output_path = os.path.join(OutputCountryFolder_UTC, f"{country} {RE} {WindTurbineHeight_meters}m BiasCorrected ResourceProfiles.csv")
-                    pd_output_diagnosis.to_csv(output_path, index=False, sep=";")
-                    print(f"{country} {RE} corrected resource profiles.csv created")
+                pd_LocalTime = CreateLocalTimeProfile(pd_UTC, pd_CountryUTC_offsets, country_withspaces)
+                output_path = os.path.join(OutputCountryFolder_LocalTime, os.path.basename(FileAddressCountryProfile_UTC))
+                pd_LocalTime.to_csv(output_path, index=False, sep=";")
+                print(f"LocalTime-->{os.path.basename(FileAddressCountryProfile_UTC)}")
 
-                    pd_output_diagnosis = pd.concat(
-                        [pd_output, pd_WindBiasInformation, pd.DataFrame(np_allMSR_HourlyWindSpeeds_uncorrected_ResultantVector, columns=HourTags)], axis=1)
-                    output_path = os.path.join(OutputCountryFolder_UTC, f"{country} {RE} {WindTurbineHeight_meters}m UnCorrected ResourceProfiles.csv")
-                    pd_output_diagnosis.to_csv(output_path, index=False, sep=";")
-                    print(f"{country} {RE} uncorrected resource profiles.csv created")
-
-                pd_output = pd.concat(
-                    [pd_output,
-                     pd_WindBiasInformation,
-                     pd.DataFrame(np_allMSR_HourlyCF,
-                                  columns=HourTags)],
-                                  axis=1)
-                FileAddressCountryProfile_UTC = os.path.join(OutputCountryFolder_UTC,f"{country} {RE} {WindTurbineHeight_meters}m CFs.csv")
-                pd_output.to_csv(FileAddressCountryProfile_UTC, index=False, sep=";")
-                print(f"UTC-->{country} {RE} CFs.csv created")
-
-            pd_UTC = pd.read_csv(FileAddressCountryProfile_UTC, sep=";")
-
-            pd_LocalTime = CreateLocalTimeProfile(pd_UTC, pd_CountryUTC_offsets, country_withspaces)
-            output_path = os.path.join(OutputCountryFolder_LocalTime, os.path.basename(FileAddressCountryProfile_UTC))
-            pd_LocalTime.to_csv(output_path, index=False, sep=";")
-            print(f"LocalTime-->{os.path.basename(FileAddressCountryProfile_UTC)}")
-
-        except Exception as e:
-            print (e)
-            traceback.print_exc()
-            pd_LogFile = pd.concat(
-                [pd_LogFile, 
-                 pd.DataFrame({"Log": [f"{country}: Skipped {RE} profiles"]})],
-                 ignore_index=True)
-            print(f"{country}: Skipped {RE} profiles")
-            output_path = os.path.join(OutputFolder_UTCProfiles, f"{DateTimeStamp}ProfileGenerator_LogFile.csv")
-            pd_LogFile.to_csv(output_path, index=False, sep=";")
+            except Exception as e:
+                print (e)
+                traceback.print_exc()
+                pd_LogFile = pd.concat(
+                    [pd_LogFile, 
+                    pd.DataFrame({"Log": [f"{country}: Skipped {RE} profiles {year}"]})],
+                    ignore_index=True)
+                print(f"{country}: Skipped {RE} profiles {year}")
+                output_path = os.path.join(OutputFolder_UTCProfiles, f"{DateTimeStamp}_{year}_ProfileGenerator_LogFile.csv")
+                pd_LogFile.to_csv(output_path, index=False, sep=";")
